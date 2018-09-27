@@ -30,6 +30,8 @@ from object_detection.builders import graph_rewriter_builder
 from object_detection.builders import model_builder
 from object_detection.builders import optimizer_builder
 from object_detection.core import standard_fields as fields
+from object_detection.core import box_list_ops
+from object_detection.core import box_list
 from object_detection.utils import config_util
 from object_detection.utils import label_map_util
 from object_detection.utils import shape_utils
@@ -353,6 +355,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
         for var in optimizer_summary_vars:
           tf.summary.scalar(var.op.name, var)
       summaries = [] if use_tpu else None
+
+      ''' Debug gradient backprop '''
+      #grads_and_vars = training_optimizer.compute_gradients(total_loss)
+      #total_loss = tf.Print(total_loss, [grads_and_vars[0][0]], message=str(grads_and_vars[0][1].name))
+
       train_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,
@@ -384,9 +391,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
                               tf.uint8)
       else:
         eval_images = features[fields.InputDataFields.image]
-
       eval_dict = eval_util.result_dict_for_single_example(
           eval_images[0:1],
+          #eval_images[img_i:(img_i+1)],
           features[inputs.HASH_KEY][0],
           detections,
           groundtruth,
@@ -411,7 +418,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
 
       # Eval metrics on a single example.
       eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
-          eval_config, category_index.values(), eval_dict)
+          eval_config, category_index.values(), eval_dict) # list(category_index.values()) ???
       for loss_key, loss_tensor in iter(losses_dict.items()):
         eval_metric_ops[loss_key] = tf.metrics.mean(loss_tensor)
       for var in optimizer_summary_vars:
@@ -429,7 +436,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
             variables_to_restore,
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
-
+      
     # EVAL executes on CPU, so use regular non-TPU EstimatorSpec.
     if use_tpu and mode != tf.estimator.ModeKeys.EVAL:
       return tf.contrib.tpu.TPUEstimatorSpec(

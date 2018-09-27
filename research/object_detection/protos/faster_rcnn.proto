@@ -105,6 +105,10 @@ message FasterRcnn {
   // Fraction of positive examples to use per image for the box classifier.
   optional float second_stage_balance_fraction = 23 [default=0.25];
 
+  // A previously hard-coded value, proposals for the box classifier with IoU below this threshold 
+  // will be counted as negatives, or as positives otherwise
+  optional float second_stage_target_iou_threshold = 35 [default=0.5];
+
   // Post processing to apply on the second stage box classifier predictions.
   // Note: the `score_converter` provided to the FasterRCNNMetaArch constructor
   // is taken from this `second_stage_post_processing` proto.

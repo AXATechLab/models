@@ -136,7 +136,7 @@ def draw_bounding_box_on_image(image,
                                ymax,
                                xmax,
                                color='red',
-                               thickness=4,
+                               thickness=16, # 4
                                display_str_list=(),
                                use_normalized_coordinates=True):
   """Adds a bounding box to an image.
@@ -173,7 +173,7 @@ def draw_bounding_box_on_image(image,
   draw.line([(left, top), (left, bottom), (right, bottom),
              (right, top), (left, top)], width=thickness, fill=color)
   try:
-    font = ImageFont.truetype('arial.ttf', 24)
+    font = ImageFont.truetype('arial.ttf', 72) # 24
   except IOError:
     font = ImageFont.load_default()
 
@@ -265,6 +265,8 @@ def draw_bounding_boxes_on_image(image,
       display_str_list = display_str_list_list[i]
     draw_bounding_box_on_image(image, boxes[i, 0], boxes[i, 1], boxes[i, 2],
                                boxes[i, 3], color, thickness, display_str_list)
+
+
 
 
 def _visualize_boxes(image, boxes, classes, scores, category_index, **kwargs):
@@ -383,7 +385,6 @@ def draw_bounding_boxes_on_image_tensors(images,
     image_with_boxes = tf.py_func(visualize_boxes_fn, image_and_detections,
                                   tf.uint8)
     return image_with_boxes
-
   images = tf.map_fn(draw_boxes, elems, dtype=tf.uint8, back_prop=False)
   return images
 
@@ -412,6 +413,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
     A [1, H, 2 * W, C] uint8 tensor. The subimage on the left corresponds to
       detections, while the subimage on the right corresponds to groundtruth.
   """
+  print("start of draw")
   detection_fields = fields.DetectionResultFields()
   input_data_fields = fields.InputDataFields()
   instance_masks = None
@@ -429,6 +431,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
         tf.expand_dims(
             eval_dict[input_data_fields.groundtruth_instance_masks], axis=0),
         tf.uint8)
+
   images_with_detections = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
       tf.expand_dims(eval_dict[detection_fields.detection_boxes], axis=0),

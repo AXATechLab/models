@@ -540,6 +540,7 @@ def normalize_to_target(inputs,
       mean = tf.reduce_mean(target_norm)
       mean = tf.Print(mean, ['NormalizeToTarget:', mean])
       tf.summary.scalar(tf.get_variable_scope().name, mean)
+      print("Name of var:",tf.get_variable_scope().name)
     lengths = epsilon + tf.sqrt(tf.reduce_sum(tf.square(inputs), dim, True))
     mult_shape = input_rank*[1]
     mult_shape[dim] = depth

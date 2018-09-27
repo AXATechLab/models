@@ -151,6 +151,7 @@ def get_evaluators(eval_config, categories):
   return evaluators_list
 
 
+
 def evaluate(create_input_dict_fn, create_model_fn, eval_config, categories,
              checkpoint_dir, eval_dir, graph_hook_fn=None, evaluator_list=None):
   """Evaluation function for detection models.

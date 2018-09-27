@@ -56,6 +56,7 @@ class BoxList(object):
       raise ValueError('Invalid tensor type: should be tf.float32')
     self.data = {'boxes': boxes}
 
+
   def num_boxes(self):
     """Returns number of boxes held in collection.
 

@@ -44,7 +44,12 @@ class Head(object):
 
   def __init__(self):
     """Constructor."""
+    self._template_fields = None
     pass
+
+
+  def restrict_to(self, fields):
+    self._template_fields = fields
 
   @abstractmethod
   def predict(self, features, num_predictions_per_location):

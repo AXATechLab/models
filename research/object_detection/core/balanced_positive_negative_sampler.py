@@ -50,6 +50,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
     Raises:
       ValueError: if positive_fraction < 0, or positive_fraction > 1
     """
+    #print("The fraction is " + str(positive_fraction))
     if positive_fraction < 0 or positive_fraction > 1:
       raise ValueError('positive_fraction should be in range [0,1]. '
                        'Received: %s.' % positive_fraction)
@@ -243,7 +244,9 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         # Only sample from indicated samples
         negative_idx = tf.logical_not(labels)
         positive_idx = tf.logical_and(labels, indicator)
+        #positive_idx = tf.Print(positive_idx, [tf.count_nonzero(positive_idx)], message="Num of Positives ")
         negative_idx = tf.logical_and(negative_idx, indicator)
+       # negative_idx = tf.Print(negative_idx, [tf.count_nonzero(negative_idx)], message="Num of Negatives ")
 
         # Sample positive and negative samples separately
         if batch_size is None:

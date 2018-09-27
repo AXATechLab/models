@@ -23,6 +23,8 @@ import functools
 import tensorflow as tf
 
 from object_detection.predictors.heads import head
+from functools import partial
+from utils import shape_utils
 
 slim = tf.contrib.slim
 
@@ -132,6 +134,7 @@ class ConvolutionalBoxHead(head.Head):
         min(feature_width, feature_height).
       use_depthwise: Whether to use depthwise convolutions for prediction
         steps. Default is False.
+      template_proposals: (optional) @Michele restrict head to selected areas. int Tensor of shape [num_proposals, 4]
 
     Raises:
       ValueError: if min_depth > max_depth.
@@ -156,6 +159,7 @@ class ConvolutionalBoxHead(head.Head):
         [batch_size, num_anchors, q, code_size] representing the location of
         the objects, where q is 1 or the number of classes.
     """
+
     net = features
     if self._use_depthwise:
       box_encodings = slim.separable_conv2d(
@@ -180,8 +184,26 @@ class ConvolutionalBoxHead(head.Head):
     batch_size = features.get_shape().as_list()[0]
     if batch_size is None:
       batch_size = tf.shape(features)[0]
-    box_encodings = tf.reshape(box_encodings,
+    fields = self._template_fields
+    if fields is None:
+      # @Michele there's no area restriction (original architecture)
+      box_encodings = tf.reshape(box_encodings,
                                [batch_size, -1, 1, self._box_code_size])
+    else:
+      # @Michele code to restrict RPN encodings to template fields
+      def batch_field_prediction(field, feature_map):
+        y_min, x_min, y_max, x_max = tf.split(field, 4)
+        # field_map = tf.slice(feature_map, [y_min, x_min, tf.constant([0])], [y_max - y_min + 1, x_max - x_min + 1, -1])
+        #self.debug_area += (y_max[0] - y_min[0] + 1) * (x_max[0] - x_min[0] + 1) 
+        field_map = feature_map[y_min[0]:(y_max[0] + 1), x_min[0]:(x_max[0] + 1), :]
+        return tf.reshape(field_map, [-1, self._box_code_size])
+      field_prediction = partial(batch_field_prediction, feature_map=box_encodings[0])
+      #self.debug_area = 0
+      anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields, dtype=tf.float32, as_list=True)
+
+      box_encodings = tf.reshape(tf.concat(anchor_list, axis=0), [1, -1, 1, self._box_code_size])
+   # box_encodings = tf.Print(box_encodings, [tf.shape(box_encodings)], message="Box encodings shape ")
+   # box_encodings = tf.Print(box_encodings, [self.debug_area])
     return box_encodings
 
 

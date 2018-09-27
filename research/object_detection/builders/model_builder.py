@@ -30,6 +30,8 @@ from object_detection.core import balanced_positive_negative_sampler as sampler
 from object_detection.core import post_processing
 from object_detection.core import target_assigner
 from object_detection.meta_architectures import faster_rcnn_meta_arch
+from object_detection.meta_architectures import faster_rcnn_meta_arch_override_RPN
+from object_detection.meta_architectures import faster_rcnn_meta_arch_rpn_blend
 from object_detection.meta_architectures import rfcn_meta_arch
 from object_detection.meta_architectures import ssd_meta_arch
 from object_detection.models import faster_rcnn_inception_resnet_v2_feature_extractor as frcnn_inc_res
@@ -117,7 +119,13 @@ def build(model_config, is_training, add_summaries=True,
                             add_background_class)
   if meta_architecture == 'faster_rcnn':
     return _build_faster_rcnn_model(model_config.faster_rcnn, is_training,
-                                    add_summaries)
+                                    add_summaries, meta_architecture)
+  if meta_architecture == 'faster_rcnn_override_RPN':
+    return _build_faster_rcnn_model(model_config.faster_rcnn_override_RPN, is_training,
+                                    add_summaries, meta_architecture)
+  if meta_architecture == 'faster_rcnn_rpn_blend':
+    return _build_faster_rcnn_model(model_config.faster_rcnn_rpn_blend, is_training,
+                                    add_summaries, meta_architecture)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
 
@@ -316,7 +324,7 @@ def _build_faster_rcnn_feature_extractor(
       batch_norm_trainable, reuse_weights)
 
 
-def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries):
+def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.
 
   Builds R-FCN model if the second_stage_box_predictor in the config is of type
@@ -389,7 +397,8 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries):
   second_stage_target_assigner = target_assigner.create_target_assigner(
       'FasterRCNN',
       'detection',
-      use_matmul_gather=frcnn_config.use_matmul_gather_in_matcher)
+      use_matmul_gather=frcnn_config.use_matmul_gather_in_matcher,
+      iou_threshold=frcnn_config.second_stage_target_iou_threshold)
   second_stage_box_predictor = box_predictor_builder.build(
       hyperparams_builder.build,
       frcnn_config.second_stage_box_predictor,
@@ -469,8 +478,26 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries):
     return rfcn_meta_arch.RFCNMetaArch(
         second_stage_rfcn_box_predictor=second_stage_box_predictor,
         **common_kwargs)
-  else:
+  elif meta_architecture == 'faster_rcnn':
     return faster_rcnn_meta_arch.FasterRCNNMetaArch(
+        initial_crop_size=initial_crop_size,
+        maxpool_kernel_size=maxpool_kernel_size,
+        maxpool_stride=maxpool_stride,
+        second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
+        second_stage_mask_prediction_loss_weight=(
+            second_stage_mask_prediction_loss_weight),
+        **common_kwargs)
+  elif meta_architecture == 'faster_rcnn_override_RPN':
+    return faster_rcnn_meta_arch_override_RPN.FasterRCNNMetaArchOverrideRPN(
+        initial_crop_size=initial_crop_size,
+        maxpool_kernel_size=maxpool_kernel_size,
+        maxpool_stride=maxpool_stride,
+        second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
+        second_stage_mask_prediction_loss_weight=(
+            second_stage_mask_prediction_loss_weight),
+        **common_kwargs)
+  elif meta_architecture == 'faster_rcnn_rpn_blend':
+    return faster_rcnn_meta_arch_rpn_blend.FasterRCNNMetaArchRPNBlend(
         initial_crop_size=initial_crop_size,
         maxpool_kernel_size=maxpool_kernel_size,
         maxpool_stride=maxpool_stride,

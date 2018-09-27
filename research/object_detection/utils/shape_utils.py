@@ -175,7 +175,7 @@ def combined_static_and_dynamic_shape(tensor):
 
 
 def static_or_dynamic_map_fn(fn, elems, dtype=None,
-                             parallel_iterations=32, back_prop=True):
+                             parallel_iterations=32, back_prop=True, as_list=False):
   """Runs map_fn as a (static) for loop when possible.
 
   This function rewrites the map_fn as an explicit unstack input -> for loop
@@ -235,6 +235,8 @@ def static_or_dynamic_map_fn(fn, elems, dtype=None,
     if not elems_shape or not elems_shape[0]:
       return tf.map_fn(fn, elems, dtype, parallel_iterations, back_prop)
     outputs = [fn(arg) for arg in tf.unstack(elems)]
+  if as_list:
+    return outputs
   # Stack `outputs`, which is a list of Tensors or list of lists of Tensors
   if all([isinstance(output, tf.Tensor) for output in outputs]):
     return tf.stack(outputs)

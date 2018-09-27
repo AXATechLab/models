@@ -9,6 +9,8 @@ import "object_detection/protos/ssd.proto";
 message DetectionModel {
   oneof model {
     FasterRcnn faster_rcnn = 1;
+    FasterRcnn faster_rcnn_override_RPN = 3;
+    FasterRcnn faster_rcnn_rpn_blend = 4;
     Ssd ssd = 2;
   }
 }

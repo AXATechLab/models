@@ -97,7 +97,7 @@ class ConvolutionalBoxPredictor(box_predictor.BoxPredictor):
   def num_classes(self):
     return self._num_classes
 
-  def _predict(self, image_features, num_predictions_per_location_list):
+  def _predict(self, image_features, num_predictions_per_location_list, template_fields=None):
     """Computes encoded object locations and corresponding confidences.
 
     Args:
@@ -163,6 +163,7 @@ class ConvolutionalBoxPredictor(box_predictor.BoxPredictor):
                 head_obj = self._class_prediction_head
               else:
                 head_obj = self._other_heads[head_name]
+              head_obj.restrict_to(template_fields) # @Michele: predict only on the given fields 
               prediction = head_obj.predict(
                   features=net,
                   num_predictions_per_location=num_predictions_per_location)

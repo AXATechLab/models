@@ -95,6 +95,8 @@ configured in the meta architecture:
 from abc import abstractmethod
 from functools import partial
 import tensorflow as tf
+import json
+import numpy as np
 
 from object_detection.anchor_generators import grid_anchor_generator
 from object_detection.builders import box_predictor_builder
@@ -387,6 +389,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
     """
     # TODO(rathodv): add_summaries is currently unused. Respect that directive
     # in the future.
+    print("Running the original FasterRCNN")
     super(FasterRCNNMetaArch, self).__init__(num_classes=num_classes)
 
     if not isinstance(first_stage_anchor_generator,
@@ -772,6 +775,10 @@ class FasterRCNNMetaArch(model.DetectionModel):
     proposal_boxes_normalized, _, num_proposals = self._postprocess_rpn(
         rpn_box_encodings, rpn_objectness_predictions_with_background,
         anchors, image_shape_2d, true_image_shapes)
+    #proposal_boxes_normalized = tf.Print(proposal_boxes_normalized, [tf.shape(proposal_boxes_normalized)], message=("Shape of pboxes "))
+
+
+    #(debug, _, _, _) = self._format_groundtruth_data(tf.shape(rpn_features_to_crop))
 
     # If mixed-precision training on TPU is enabled, the dtype of
     # rpn_features_to_crop is bfloat16, otherwise it is float32. tf.cast is
@@ -978,6 +985,10 @@ class FasterRCNNMetaArch(model.DetectionModel):
     anchors = box_list_ops.concatenate(
         self._first_stage_anchor_generator.generate([(feature_map_shape[1],
                                                       feature_map_shape[2])]))
+   # anchors.set(tf.Print(anchors.get(), [feature_map_shape], message="Anchors ", summarize=9999))
+
+    #anchors.set(tf.Print(anchors.get(), [anchors.get()], message="Anchors ", summarize=9999))
+
     with slim.arg_scope(self._first_stage_box_predictor_arg_scope_fn()):
       kernel_size = self._first_stage_box_predictor_kernel_size
       reuse = tf.get_variable_scope().reuse
