@@ -107,7 +107,7 @@ message FasterRcnn {
 
   // A previously hard-coded value, proposals for the box classifier with IoU below this threshold 
   // will be counted as negatives, or as positives otherwise
-  optional float second_stage_target_iou_threshold = 35 [default=0.5];
+  optional float second_stage_target_iou_threshold = 37 [default=0.5];
 
   // Post processing to apply on the second stage box classifier predictions.
   // Note: the `score_converter` provided to the FasterRCNNMetaArch constructor
