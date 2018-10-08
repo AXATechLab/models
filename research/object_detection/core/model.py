@@ -84,7 +84,7 @@ class DetectionModel(object):
 
     Args:
       field: a string key, options are
-        fields.BoxListFields.{boxes,classes,masks,keypoints} or
+        fields.BoxListFields.{boxes,classes,masks,keypoints, transcription} or
         fields.InputDataFields.is_annotated.
 
     Returns:
@@ -238,6 +238,7 @@ class DetectionModel(object):
   def provide_groundtruth(self,
                           groundtruth_boxes_list,
                           groundtruth_classes_list,
+                          groundtruth_transcriptions=None,
                           groundtruth_masks_list=None,
                           groundtruth_keypoints_list=None,
                           groundtruth_weights_list=None,

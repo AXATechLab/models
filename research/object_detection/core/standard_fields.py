@@ -85,6 +85,7 @@ class InputDataFields(object):
   groundtruth_area = 'groundtruth_area'
   groundtruth_difficult = 'groundtruth_difficult'
   groundtruth_group_of = 'groundtruth_group_of'
+  groundtruth_transcription = 'groundtruth_transcription'
   proposal_boxes = 'proposal_boxes'
   proposal_objectness = 'proposal_objectness'
   groundtruth_instance_masks = 'groundtruth_instance_masks'
@@ -143,6 +144,7 @@ class BoxListFields(object):
   """
   boxes = 'boxes'
   classes = 'classes'
+  transcription = 'transcription'
   scores = 'scores'
   weights = 'weights'
   objectness = 'objectness'

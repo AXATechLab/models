@@ -262,7 +262,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         prediction_dict = detection_model.predict(
             preprocessed_images,
             features[fields.InputDataFields.true_image_shape])
-        transcription_dict = transcription_model.predict(prediction_dict)
+        transcription_dict = transcription_model.predict(prediction_dict, None,
+          features[fields.InputDataFields.true_image_shape])
         for k, v in prediction_dict.items():
           if v.dtype == tf.bfloat16:
             prediction_dict[k] = tf.cast(v, tf.float32)

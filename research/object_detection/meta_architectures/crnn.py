@@ -1,5 +1,7 @@
 import tensorflow as tf
 
+from core import box_list, box_list_ops
+
 import sys
 sys.path.append("~/Documents/Git/tf-crnn/")
 from src.model import deep_bidirectional_lstm
@@ -12,10 +14,24 @@ class CRNN(object):
 		self.target_assigner = target_assigner
 
 	# Extract from crnn_fn
-	def predict(self, detection_dict, labels):
-		feature_map, proposal_boxes_normalized = detection_dict['rpn_features_to_crop'], detection_dict['proposal_boxes_normalized']
+	def predict(self, predictions_dict, labels, true_image_shapes):
+		# Postprocess FasterRCNN stage 2
+		detections_dict = self.detection_model._postprocess_box_classifier(
+          predictions_dict['refined_box_encodings'],
+          predictions_dict['class_predictions_with_background'],
+          predictions_dict['proposal_boxes'],
+          predictions_dict['num_proposals'],
+          true_image_shapes)
+		feature_map, detection_boxes = predictions_dict['rpn_features_to_crop'], 
+		 detections_dict['detection_boxes']
+
+		# Reuse the second stage cropping as-is
 		cropped_regions = detection_model._compute_second_stage_input_feature_maps(feature_map,
-			tf.cast(proposal_boxes_normalized, feature_map.dtype))
+			tf.cast(detection_boxes, feature_map.dtype))
+		abs_cropped_regions = box_list_ops.to_absolute_coordinates(
+			BoxList(cropped_regions), *true_image_shapes[0])
+		gt_boxlists, _, _ = detection_model._format_groundtruth_data(true_image_shapes)
+		self.target_assigner.assign(abs_cropped_regions, )
 
 
 	def lstm_layers(self, features, labels):
