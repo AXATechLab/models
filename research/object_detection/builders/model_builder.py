@@ -53,6 +53,11 @@ from object_detection.predictors import rfcn_box_predictor
 from object_detection.protos import model_pb2
 from object_detection.utils import ops
 
+import sys
+sys.path.append("~/Git/tf-crnn/")
+from object_detection.meta_architectures import crnn
+from src.config import Params, import_params_from_json
+
 # A map of names to SSD feature extractors.
 SSD_FEATURE_EXTRACTOR_CLASS_MAP = {
     'ssd_inception_v2': SSDInceptionV2FeatureExtractor,
@@ -91,6 +96,11 @@ FASTER_RCNN_FEATURE_EXTRACTOR_CLASS_MAP = {
     frcnn_resnet_v1.FasterRCNNResnet152FeatureExtractor,
 }
 
+def build_transcription(model_config, is_training, add_summaries=True):
+  meta_architecture = model_config.WhichOneof('transcription_model')
+  if meta_architecture == 'crnn':
+    return _build_crnn_model(model_config.crnn, is_training, add_summaries)
+  raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
 def build(model_config, is_training, add_summaries=True,
           add_background_class=True):
@@ -127,6 +137,7 @@ def build(model_config, is_training, add_summaries=True,
     return _build_faster_rcnn_model(model_config.faster_rcnn_rpn_blend, is_training,
                                     add_summaries, meta_architecture)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
+
 
 
 def _build_ssd_feature_extractor(feature_extractor_config, is_training,
@@ -323,6 +334,17 @@ def _build_faster_rcnn_feature_extractor(
       is_training, first_stage_features_stride,
       batch_norm_trainable, reuse_weights)
 
+
+
+def _build_crnn_model(crnn_config, detection_model, is_training, add_summaries=True):
+  json_path = crnn_config.json_dir # placeholder for actual values
+  dict_params = import_params_from_json(json_filename=json_path)
+  parameters = Params(**dict_params)
+  crnn_target_assigner = target_assigner.create_target_assigner(
+      'CRNN', None,
+      use_matmul_gather=False,
+      iou_threshold=crnn_config.assigner_iou_threshold)
+  return CRNN(parameters, detection_model, crnn_target_assigner)  
 
 def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.

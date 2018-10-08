@@ -4,6 +4,7 @@ package object_detection.protos;
 
 import "object_detection/protos/faster_rcnn.proto";
 import "object_detection/protos/ssd.proto";
+import "object_detection/protos/crnn.proto";
 
 // Top level configuration for DetectionModels.
 message DetectionModel {
@@ -12,5 +13,8 @@ message DetectionModel {
     FasterRcnn faster_rcnn_override_RPN = 3;
     FasterRcnn faster_rcnn_rpn_blend = 4;
     Ssd ssd = 2;
+  }
+  oneof transcription_model {
+  	CRNN crnn = 5 [default=None];
   }
 }

@@ -175,7 +175,7 @@ def unstack_batch(tensor_dict, unpad_groundtruth_tensors=True):
   return unbatched_tensor_dict
 
 
-def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
+def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcription_model_fn=None):
   """Creates a model function for `Estimator`.
 
   Args:
@@ -215,6 +215,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     tf.keras.backend.set_learning_phase(is_training)
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
+    transcription_model = transcription_model_fn(detection_model, is_training=is_training)
     scaffold_fn = None
 
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -261,6 +262,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
         prediction_dict = detection_model.predict(
             preprocessed_images,
             features[fields.InputDataFields.true_image_shape])
+        transcription_dict = transcription_model.predict(prediction_dict)
         for k, v in prediction_dict.items():
           if v.dtype == tf.bfloat16:
             prediction_dict[k] = tf.cast(v, tf.float32)
@@ -562,6 +564,8 @@ def create_estimator_and_inputs(run_config,
 
   detection_model_fn = functools.partial(
       model_builder.build, model_config=model_config)
+  transcription_model_fn = functools.partial(
+      model_builder.build_transcription, model_config=model_config)
 
   # Create the input functions for TRAIN/EVAL/PREDICT.
   train_input_fn = create_train_input_fn(
@@ -587,7 +591,8 @@ def create_estimator_and_inputs(run_config,
   export_to_tpu = hparams.get('export_to_tpu', False)
   tf.logging.info('create_estimator_and_inputs: use_tpu %s, export_to_tpu %s',
                   use_tpu, export_to_tpu)
-  model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu)
+  model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu, 
+    transcription_model_fn=transcription_model_fn)
   if use_tpu_estimator:
     estimator = tf.contrib.tpu.TPUEstimator(
         model_fn=model_fn,

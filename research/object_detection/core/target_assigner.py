@@ -400,6 +400,15 @@ def create_target_assigner(reference, stage=None,
                                            use_matmul_gather=use_matmul_gather)
     box_coder = faster_rcnn_box_coder.FasterRcnnBoxCoder(
         scale_factors=[10.0, 10.0, 5.0, 5.0])
+  elif reference == 'CRNN' and stage == 'transcription':
+    similarity_calc = sim_calc.IouSimilarity()
+    # Uses all proposals with IOU < 0.5 as candidate negatives.
+    print("IOU target Threshold is ", iou_threshold)
+    matcher = argmax_matcher.ArgMaxMatcher(matched_threshold=iou_threshold,
+                                           negatives_lower_than_unmatched=True,
+                                           use_matmul_gather=use_matmul_gather)
+    box_coder = faster_rcnn_box_coder.FasterRcnnBoxCoder(
+        scale_factors=[10.0, 10.0, 5.0, 5.0])
 
   elif reference == 'FastRCNN':
     similarity_calc = sim_calc.IouSimilarity()
