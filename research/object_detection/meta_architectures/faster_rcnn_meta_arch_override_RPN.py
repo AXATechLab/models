@@ -1525,7 +1525,7 @@ class FasterRCNNMetaArchOverrideRPN(model.DetectionModel):
             tf.stack(single_image_proposal_score_sample),
             tf.stack(single_image_num_proposals_sample))
 
-  def _format_groundtruth_data(self, true_image_shapes):
+  def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
     """Helper function for preparing groundtruth data for target assignment.
 
     In order to be consistent with the model.DetectionModel interface,

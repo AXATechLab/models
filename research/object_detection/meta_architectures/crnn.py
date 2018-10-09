@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from core import box_list, box_list_ops
-
+from core import standard_fields as fields
 import sys
 sys.path.append("~/Documents/Git/tf-crnn/")
 from src.model import deep_bidirectional_lstm
@@ -13,51 +13,83 @@ class CRNN(object):
 		self.detection_model = detection_model
 		self.target_assigner = target_assigner
 
-	# Extract from crnn_fn
-	def predict(self, predictions_dict, labels, true_image_shapes):
+	# This is in the same fashion as predict_third_stage's inference
+	def predict(self, prediction_dict, labels, true_image_shapes):
 		# Postprocess FasterRCNN stage 2
 		detections_dict = self.detection_model._postprocess_box_classifier(
-          predictions_dict['refined_box_encodings'],
-          predictions_dict['class_predictions_with_background'],
-          predictions_dict['proposal_boxes'],
-          predictions_dict['num_proposals'],
+          prediction_dict['refined_box_encodings'],
+          prediction_dict['class_predictions_with_background'],
+          prediction_dict['proposal_boxes'],
+          prediction_dict['num_proposals'],
           true_image_shapes)
-		feature_map, detection_boxes = predictions_dict['rpn_features_to_crop'], 
-		 detections_dict['detection_boxes']
-		num_valid_proposals = detections_dict['num_detections']
-
-		# Reuse the second stage cropping as-is
-		cropped_regions = detection_model._compute_second_stage_input_feature_maps(feature_map,
-			tf.cast(detection_boxes, feature_map.dtype))
-		#### TODO: Modify and use _sample_box_classifier_batch so that it works for transcription as well
-		'''proposal_boxlist = box_list_ops.to_absolute_coordinates(
-			BoxList(cropped_regions), *true_image_shapes[0])
+	      prediction_dict.update(detections_dict)
+	      detection_boxes = detections_dict[
+	          fields.DetectionResultFields.detection_boxes]
+	      detection_scores = detections_dict[
+	      	  fields.DetectionResultFields.detection_scores]
+	      num_detections = detections_dict[
+	      	  fields.DetectionResultFields.num_detections]
+	      rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
+	      # batch_size = tf.shape(detection_boxes)[0]
+	      # max_detection = tf.shape(detection_boxes)[1]
+	      num_valid_proposals = num_detections
 
 		gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
 			stage='transcription')
-		(cls_targets, cls_weights, _, _, _) = self.target_assigner.assign(proposal_boxlist, 
-			gt_boxlists, gt_classes,         
+
+		# Reuse the subsampling method
+		# Is subsamping needed?
+		# normalized_detections = box_list_ops.to_absolute_coordinates(BoxList(detection_boxes)).get()
+		# detection_model._sample_box_classifier_batch(normalized_detections,
+		# 	detection_scores, num_detections)
+
+
+		# Reuse the second stage cropping as-is
+      	flattened_detected_feature_maps = (
+	          detection_model._compute_second_stage_input_feature_maps(
+	              rpn_features_to_crop, detection_boxes))
+
+		detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(detection_boxes))
+      	detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
+
+		(_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist, 
+			gt_boxlists[0], gt_classes[0],         
 			unmatched_class_label=tf.constant(
             [1] + self._num_classes * [0], dtype=tf.float32),
          	groundtruth_weights=gt_weights)
+
+		matching = match.match_results() # indices of matched groundtruths, or negative number if unmatched
+		for i, gt_ind in matching
+
+		positive_indicator = tf.greater(matching, -1)
 		
+
 		positive_indicator = tf.greater(tf.argmax(cls_targets, axis=1), 0)
 		valid_indicator = tf.logical_and(
 	        tf.range(proposal_boxlist.num_boxes()) < num_valid_proposals,
 	        cls_weights > 0
 	    )
-	    selected_positions = detection_model._second_stage_sampler.subsample(
-	        valid_indicator,
-	        detection_model._second_stage_batch_size,
-	        positive_indicator)
-	    return box_list_ops.boolean_mask(
+
+ 		return box_list_ops.boolean_mask(
 	        proposal_boxlist,
 	        selected_positions,
 	        use_static_shapes=self._use_static_shapes,
 	        indicator_sum=(self._second_stage_batch_size
-	                       if self._use_static_shapes else None))'''
+	                       if self._use_static_shapes else None))
+
+		#### TODO: Modify and use _sample_box_classifier_batch so that it works for transcription as well
+		'''proposal_boxlist = box_list_ops.to_absolute_coordinates(
+			BoxList(cropped_regions), *true_image_shapes[0])
 
 
+		
+	    selected_positions = detection_model._second_stage_sampler.subsample(
+	        valid_indicator,
+	        detection_model._second_stage_batch_size,
+	        positive_indicator)
+	   '''
+
+# Extract from crnn_fn
 	def lstm_layers(self, features, labels):
 		parameters = self.parameters
 		logprob, raw_pred = deep_bidirectional_lstm(conv, features['corpus'], params=parameters, summaries=False)

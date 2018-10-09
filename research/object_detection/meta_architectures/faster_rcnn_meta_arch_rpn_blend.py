@@ -1397,7 +1397,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
             tf.stack(single_image_proposal_score_sample),
             tf.stack(single_image_num_proposals_sample))
 
-  def _format_groundtruth_data(self, true_image_shapes):
+  def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
     """Helper function for preparing groundtruth data for target assignment.
 
     In order to be consistent with the model.DetectionModel interface,
@@ -1465,6 +1465,12 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         groundtruth_weights = tf.ones(num_gt)
         groundtruth_weights_list.append(groundtruth_weights)
 
+    if stage == 'transcription':
+      groundtruth_transcriptions_list = self.groundtruth_lists(
+            fields.BoxListFields.transcription)
+      return (groundtruth_boxlists, groundtruth_classes_with_background_list,
+            groundtruth_masks_list, groundtruth_weights_list, groundtruth_transcriptions_list)
+
     return (groundtruth_boxlists, groundtruth_classes_with_background_list,
             groundtruth_masks_list, groundtruth_weights_list)
 
@@ -1496,7 +1502,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         groundtruth_classes_with_background,
         unmatched_class_label=tf.constant(
             [1] + self._num_classes * [0], dtype=tf.float32),
-        groundtruth_weights=groundtruth_weights)
+        groundtruth_weights=groundtruth_weights,
+        groundtruth_transcriptions=groundtruth_transcriptions)
     # Selects all boxes as candidates if none of them is selected according
     # to cls_weights. This could happen as boxes within certain IOU ranges
     # are ignored. If triggered, the selected boxes will still be ignored

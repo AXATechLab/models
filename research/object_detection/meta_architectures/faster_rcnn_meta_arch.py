@@ -1286,7 +1286,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
       num_proposals,
       groundtruth_boxlists,
       groundtruth_classes_with_background_list,
-      groundtruth_weights_list):
+      groundtruth_weights_list,
+      groundtruth_transcriptions_list=[None]):
     """Samples a minibatch for second stage.
 
     Args:
@@ -1328,13 +1329,15 @@ class FasterRCNNMetaArch(model.DetectionModel):
          single_image_num_proposals,
          single_image_groundtruth_boxlist,
          single_image_groundtruth_classes_with_background,
-         single_image_groundtruth_weights) in zip(
+         single_image_groundtruth_weights,
+         single_image_groundtruth_transcriptions) in zip(
              tf.unstack(proposal_boxes),
              tf.unstack(proposal_scores),
              tf.unstack(num_proposals),
              groundtruth_boxlists,
              groundtruth_classes_with_background_list,
-             groundtruth_weights_list):
+             groundtruth_weights_list,
+             groundtruth_transcriptions_list):
       single_image_boxlist = box_list.BoxList(single_image_proposal_boxes)
       single_image_boxlist.add_field(fields.BoxListFields.scores,
                                      single_image_proposal_scores)
@@ -1343,7 +1346,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
           single_image_num_proposals,
           single_image_groundtruth_boxlist,
           single_image_groundtruth_classes_with_background,
-          single_image_groundtruth_weights)
+          single_image_groundtruth_weights,
+          single_image_groundtruth_transcriptions)
       sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
           sampled_boxlist,
           num_boxes=self._second_stage_batch_size)
@@ -1358,8 +1362,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
             tf.stack(single_image_proposal_score_sample),
             tf.stack(single_image_num_proposals_sample))
 
-  def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
-    """Helper function for preparing groundtruth data for target assignment.
+  def _format_groundtruth_data(self, true_image_shapes):
+    """Helper function for preparing groundtruth data for tar   get assignment.
 
     In order to be consistent with the model.DetectionModel interface,
     groundtruth boxes are specified in normalized coordinates and classes are
@@ -1430,12 +1434,6 @@ class FasterRCNNMetaArch(model.DetectionModel):
         num_gt = tf.shape(groundtruth_classes)[0]
         groundtruth_weights = tf.ones(num_gt)
         groundtruth_weights_list.append(groundtruth_weights)
-
-    if stage == 'transcription':
-      groundtruth_transcriptions_list = self.groundtruth_lists(
-            fields.BoxListFields.transcription)
-      return (groundtruth_boxlists, groundtruth_classes_with_background_list,
-            groundtruth_masks_list, groundtruth_weights_list, groundtruth_transcriptions_list)
 
     return (groundtruth_boxlists, groundtruth_classes_with_background_list,
             groundtruth_masks_list, groundtruth_weights_list)
