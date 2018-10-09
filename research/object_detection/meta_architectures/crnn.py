@@ -32,7 +32,7 @@ class CRNN(object):
 	      rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 	      # batch_size = tf.shape(detection_boxes)[0]
 	      # max_detection = tf.shape(detection_boxes)[1]
-	      num_valid_proposals = num_detections
+	      
 
 		gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
 			stage='transcription')
@@ -59,14 +59,16 @@ class CRNN(object):
          	groundtruth_weights=gt_weights)
 
 		matching = match.match_results() # indices of matched groundtruths, or negative number if unmatched
-		for i, gt_ind in matching
+		detection_transcriptions = tf.constant([None] * matching.shape[0], dtype=tf.string)
+		for i, gt_ind in enumerate(matching):
+			detection_transcriptions[]
 
 		positive_indicator = tf.greater(matching, -1)
 		
 
 		positive_indicator = tf.greater(tf.argmax(cls_targets, axis=1), 0)
 		valid_indicator = tf.logical_and(
-	        tf.range(proposal_boxlist.num_boxes()) < num_valid_proposals,
+	        tf.range(proposal_boxlist.num_boxes()) < num_detections,
 	        cls_weights > 0
 	    )
 
