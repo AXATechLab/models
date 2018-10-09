@@ -238,7 +238,7 @@ class DetectionModel(object):
   def provide_groundtruth(self,
                           groundtruth_boxes_list,
                           groundtruth_classes_list,
-                          groundtruth_transcriptions=None,
+                          groundtruth_transcriptions_list=None,
                           groundtruth_masks_list=None,
                           groundtruth_keypoints_list=None,
                           groundtruth_weights_list=None,
@@ -280,6 +280,9 @@ class DetectionModel(object):
     if groundtruth_masks_list:
       self._groundtruth_lists[
           fields.BoxListFields.masks] = groundtruth_masks_list
+    if groundtruth_transcriptions_list:
+      self._groundtruth_lists[
+          fields.BoxListFields.transcription] = groundtruth_transcriptions_list
     if groundtruth_keypoints_list:
       self._groundtruth_lists[
           fields.BoxListFields.keypoints] = groundtruth_keypoints_list

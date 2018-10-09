@@ -1358,7 +1358,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
             tf.stack(single_image_proposal_score_sample),
             tf.stack(single_image_num_proposals_sample))
 
-  def _format_groundtruth_data(self, true_image_shapes):
+  def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
     """Helper function for preparing groundtruth data for target assignment.
 
     In order to be consistent with the model.DetectionModel interface,
@@ -1401,6 +1401,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
 
     groundtruth_masks_list = self._groundtruth_lists.get(
         fields.BoxListFields.masks)
+
+
     # TODO(rathodv): Remove mask resizing once the legacy pipeline is deleted.
     if groundtruth_masks_list is not None and self._resize_masks:
       resized_masks_list = []
@@ -1428,6 +1430,12 @@ class FasterRCNNMetaArch(model.DetectionModel):
         num_gt = tf.shape(groundtruth_classes)[0]
         groundtruth_weights = tf.ones(num_gt)
         groundtruth_weights_list.append(groundtruth_weights)
+
+    if stage == 'transcription':
+      groundtruth_transcriptions_list = self.groundtruth_lists(
+            fields.BoxListFields.transcription)
+      return (groundtruth_boxlists, groundtruth_classes_with_background_list,
+            groundtruth_masks_list, groundtruth_weights_list, groundtruth_transcriptions_list)
 
     return (groundtruth_boxlists, groundtruth_classes_with_background_list,
             groundtruth_masks_list, groundtruth_weights_list)

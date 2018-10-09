@@ -235,6 +235,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       gt_boxes_list = labels[fields.InputDataFields.groundtruth_boxes]
       gt_classes_list = labels[fields.InputDataFields.groundtruth_classes]
+      gt_transcriptions_list = None
+      if fields.InputDataFields.groundtruth_transcription in labels:
+        gt_transcriptions_list = labels[fields.InputDataFields.groundtruth_transcription]
       gt_masks_list = None
       if fields.InputDataFields.groundtruth_instance_masks in labels:
         gt_masks_list = labels[
@@ -251,6 +254,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       detection_model.provide_groundtruth(
           groundtruth_boxes_list=gt_boxes_list,
           groundtruth_classes_list=gt_classes_list,
+          groundtruth_transcriptions_list = gt_transcriptions_list,
           groundtruth_masks_list=gt_masks_list,
           groundtruth_keypoints_list=gt_keypoints_list,
           groundtruth_weights_list=gt_weights_list,
