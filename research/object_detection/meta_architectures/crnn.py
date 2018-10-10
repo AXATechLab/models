@@ -15,7 +15,7 @@ class CRNN(object):
 
 	# This is in the same fashion as predict_third_stage's inference
 	# TODO: use parameters instead of copying FasterRCNN's
-	def predict(self, prediction_dict, labels, true_image_shapes):
+	def predict(self, prediction_dict, true_image_shapes):
 		# Postprocess FasterRCNN stage 2
 		detections_dict = self.detection_model._postprocess_box_classifier(
 			prediction_dict['refined_box_encodings'],
@@ -84,12 +84,55 @@ class CRNN(object):
 	          detection_model._compute_second_stage_input_feature_maps(
 	              rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0)))
 
-      	self.lstm_layers()
+      	placeholder_features = {
+      		'corpus' : tf.fill(0, shape=flattened_detected_feature_maps.shape),
+      		'image_width': flattened_detected_feature_maps.shape[2],
+      		'labels': detection_transcriptions
+      	}
+
+      	transcription_dict = self.lstm_layers(flattened_detected_feature_maps, placeholder_features)
+      	transcription_dict['labels'] = detections_transcriptions
+      	return transcription_dict
+
+	def loss(self, predictions_dict):
+ 		# Alphabet and codes
+        keys = [c for c in parameters.alphabet.encode('latin1')]
+        values = parameters.alphabet_codes
+
+        # Convert string label to code label
+        with tf.name_scope('str2code_conversion'):
+            table_str2int = tf.contrib.lookup.HashTable(
+                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+            splitted = tf.string_split(predictions_dict['labels'], delimiter='')
+            values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64)
+            codes = table_str2int.lookup(values_int)
+            codes = tf.cast(codes, tf.int32)
+            sparse_code_target = tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
+
+        seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
+                                         minlength= tf.shape(predictions_dict['prob'])[1])
+
+        # Loss
+        # ----
+        # >>> Cannot have longer labels than predictions -> error
+
+        with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
+            loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
+                                      inputs=predictions_dict['prob'],
+                                      sequence_length=tf.cast(seq_len_inputs, tf.int32),
+                                      preprocess_collapse_repeated=False,
+                                      ctc_merge_repeated=True,
+                                      ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
+                                      time_major=True)
+            loss_ctc = tf.reduce_mean(loss_ctc)
+            loss_ctc = tf.Print(loss_ctc, [loss_ctc], message='* Loss : ')
+        return loss_ctc
+
 
 	# Code from crnn_fn
-	def lstm_layers(self, features, labels):
+	def lstm_layers(self, feature_maps, features):
 		parameters = self.parameters
-		logprob, raw_pred = deep_bidirectional_lstm(conv, features['corpus'], params=parameters, summaries=False)
+		logprob, raw_pred = deep_bidirectional_lstm(feature_maps, features['corpus'], params=parameters, summaries=False)
 
 	    # Compute seq_len from image width
 	    n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
@@ -98,39 +141,7 @@ class CRNN(object):
 	    predictions_dict = {'prob': logprob,
 	                        'raw_predictions': raw_pred
 	                        }
-
-	    if not mode == tf.estimator.ModeKeys.PREDICT:
-	        # Alphabet and codes
-	        keys = [c for c in parameters.alphabet.encode('latin1')]
-	        values = parameters.alphabet_codes
-
-	        # Convert string label to code label
-	        with tf.name_scope('str2code_conversion'):
-	            table_str2int = tf.contrib.lookup.HashTable(
-	                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
-	            splitted = tf.string_split(labels, delimiter='')
-	            values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64)
-	            codes = table_str2int.lookup(values_int)
-	            codes = tf.cast(codes, tf.int32)
-	            sparse_code_target = tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
-
-	        seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
-	                                         minlength= tf.shape(predictions_dict['prob'])[1])
-
-	        # Loss
-	        # ----
-	        # >>> Cannot have longer labels than predictions -> error
-
-	        with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
-	            loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
-	                                      inputs=predictions_dict['prob'],
-	                                      sequence_length=tf.cast(seq_len_inputs, tf.int32),
-	                                      preprocess_collapse_repeated=False,
-	                                      ctc_merge_repeated=True,
-	                                      ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
-	                                      time_major=True)
-	            loss_ctc = tf.reduce_mean(loss_ctc)
-	            loss_ctc = tf.Print(loss_ctc, [loss_ctc], message='* Loss : ')
+	       
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT, tf.estimator.ModeKeys.TRAIN]:
 	        with tf.name_scope('code2str_conversion'):
 	            keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
@@ -157,5 +168,7 @@ class CRNN(object):
 	            predictions_dict['words'] = tf.stack(list_preds)
 
 	            tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
+
+	    return predictions_dict
 
 

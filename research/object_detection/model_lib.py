@@ -266,14 +266,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         prediction_dict = detection_model.predict(
             preprocessed_images,
             features[fields.InputDataFields.true_image_shape])
-        transcription_dict = transcription_model.predict(prediction_dict, None,
-          features[fields.InputDataFields.true_image_shape])
         for k, v in prediction_dict.items():
           if v.dtype == tf.bfloat16:
             prediction_dict[k] = tf.cast(v, tf.float32)
     else:
       prediction_dict = detection_model.predict(
           preprocessed_images,
+          features[fields.InputDataFields.true_image_shape])
+      transcription_dict = transcription_model.predict(prediction_dict,
           features[fields.InputDataFields.true_image_shape])
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       detections = detection_model.postprocess(
@@ -313,6 +313,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
+      transcription_loss = transcription_model.loss(transcription_dict)
+      losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
         regularization_losses = tf.get_collection(
