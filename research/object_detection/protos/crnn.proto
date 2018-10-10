@@ -8,6 +8,6 @@ import "object_detection/protos/post_processing.proto";
 
 // TODO: Rework this into an actual config file
 message CRNN {
-  str json_dir = 1
-  optional float assigner_iou_threshold = 2 [default = 0.5]
+  str json_dir = 1;
+  optional float assigner_iou_threshold = 2; [default = 0.5]
 }
