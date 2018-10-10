@@ -14,82 +14,79 @@ class CRNN(object):
 		self.target_assigner = target_assigner
 
 	# This is in the same fashion as predict_third_stage's inference
+	# TODO: use parameters instead of copying FasterRCNN's
 	def predict(self, prediction_dict, labels, true_image_shapes):
 		# Postprocess FasterRCNN stage 2
 		detections_dict = self.detection_model._postprocess_box_classifier(
-          prediction_dict['refined_box_encodings'],
-          prediction_dict['class_predictions_with_background'],
-          prediction_dict['proposal_boxes'],
-          prediction_dict['num_proposals'],
-          true_image_shapes)
-	      prediction_dict.update(detections_dict)
-	      detection_boxes = detections_dict[
-	          fields.DetectionResultFields.detection_boxes]
-	      detection_scores = detections_dict[
-	      	  fields.DetectionResultFields.detection_scores]
-	      num_detections = detections_dict[
-	      	  fields.DetectionResultFields.num_detections]
-	      rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
-	      # batch_size = tf.shape(detection_boxes)[0]
-	      # max_detection = tf.shape(detection_boxes)[1]
-	      num_valid_proposals = num_detections
+			prediction_dict['refined_box_encodings'],
+			prediction_dict['class_predictions_with_background'],
+			prediction_dict['proposal_boxes'],
+			prediction_dict['num_proposals'],
+			true_image_shapes)
+		prediction_dict.update(detections_dict)
+		detection_boxes = detections_dict[
+		  fields.DetectionResultFields.detection_boxes][0]
+		detection_scores = detections_dict[
+			fields.DetectionResultFields.detection_scores][0]
+		detection_transcriptions = None
 
-		gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
-			stage='transcription')
+		num_detections = detections_dict[
+			fields.DetectionResultFields.num_detections][0]
+		rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
-		# Reuse the subsampling method
-		# Is subsamping needed?
-		# normalized_detections = box_list_ops.to_absolute_coordinates(BoxList(detection_boxes)).get()
-		# detection_model._sample_box_classifier_batch(normalized_detections,
-		# 	detection_scores, num_detections)
+	    if detection_model._is_training:
+			gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
+				stage='transcription')
+
+			detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(detection_boxes))
+	      	detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
+
+			(_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist, 
+				gt_boxlists[0], gt_classes[0],         
+				unmatched_class_label=tf.constant(
+	            [1] + detection_model._num_classes * [0], dtype=tf.float32),
+	         	groundtruth_weights=gt_weights[0])
+
+			matching = match.match_results() # indices of matched groundtruths, or negative number if unmatched
+			detection_transcriptions = tf.constant([None] * num_detections, dtype=tf.string)
+			for dt_ind, gt_ind in enumerate(matching):
+				if gt_ind < 0:
+					continue
+				detection_transcritpions[dt_ind] = gt_transcriptions[0][gt_ind]
+	      	detection_boxlist.add_field(fields.BoxListFields.transcription, detection_transcriptions)
 
 
-		# Reuse the second stage cropping as-is
+			positive_indicator = tf.greater(matching, -1)
+			valid_indicator = tf.logical_and(
+		        tf.range(detection_boxlist.num_boxes()) < num_detections,
+		        cls_weights > 0
+		    )
+			sampled_indices = detection_model._second_stage_sampler.subsample(
+		        valid_indicator,
+		        detection_model._second_stage_batch_size,
+		        positive_indicator)
+
+	 		sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
+
+			sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
+	          sampled_boxlist,
+	          num_boxes=detection_model._second_stage_batch_size)
+
+			# Update detections with matched detections
+			detection_boxes = sampled_padded_boxlist.get()
+			detection_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.transcription)
+			detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
+	      	num_detections = tf.minimum(sampled_boxlist.num_boxes(),
+	          detection_model._second_stage_batch_size)
+
+ 		# Reuse the second stage cropping as-is
       	flattened_detected_feature_maps = (
 	          detection_model._compute_second_stage_input_feature_maps(
-	              rpn_features_to_crop, detection_boxes))
+	              rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0)))
 
-		detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(detection_boxes))
-      	detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
+      	self.lstm_layers()
 
-		(_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist, 
-			gt_boxlists[0], gt_classes[0],         
-			unmatched_class_label=tf.constant(
-            [1] + self._num_classes * [0], dtype=tf.float32),
-         	groundtruth_weights=gt_weights)
-
-		matching = match.match_results() # indices of matched groundtruths, or negative number if unmatched
-		for i, gt_ind in matching
-
-		positive_indicator = tf.greater(matching, -1)
-		
-
-		positive_indicator = tf.greater(tf.argmax(cls_targets, axis=1), 0)
-		valid_indicator = tf.logical_and(
-	        tf.range(proposal_boxlist.num_boxes()) < num_valid_proposals,
-	        cls_weights > 0
-	    )
-
- 		return box_list_ops.boolean_mask(
-	        proposal_boxlist,
-	        selected_positions,
-	        use_static_shapes=self._use_static_shapes,
-	        indicator_sum=(self._second_stage_batch_size
-	                       if self._use_static_shapes else None))
-
-		#### TODO: Modify and use _sample_box_classifier_batch so that it works for transcription as well
-		'''proposal_boxlist = box_list_ops.to_absolute_coordinates(
-			BoxList(cropped_regions), *true_image_shapes[0])
-
-
-		
-	    selected_positions = detection_model._second_stage_sampler.subsample(
-	        valid_indicator,
-	        detection_model._second_stage_batch_size,
-	        positive_indicator)
-	   '''
-
-# Extract from crnn_fn
+	# Code from crnn_fn
 	def lstm_layers(self, features, labels):
 		parameters = self.parameters
 		logprob, raw_pred = deep_bidirectional_lstm(conv, features['corpus'], params=parameters, summaries=False)
