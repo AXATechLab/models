@@ -519,6 +519,13 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
             second_stage_mask_prediction_loss_weight),
         **common_kwargs)
   elif meta_architecture == 'faster_rcnn_rpn_blend':
+    common_kwargs['use_matmul_crop_and_resize'] = False
+    common_kwargs['first_stage_nms_iou_threshold'] = frcnn_config.first_stage_nms_iou_threshold
+    common_kwargs['first_stage_nms_score_threshold'] = frcnn_config.first_stage_nms_score_threshold
+    common_kwargs.pop('crop_and_resize_fn')
+    common_kwargs.pop('first_stage_non_max_suppression_fn')
+    common_kwargs.pop('resize_masks')
+    common_kwargs.pop('use_static_shapes')
     return faster_rcnn_meta_arch_rpn_blend.FasterRCNNMetaArchRPNBlend(
         initial_crop_size=initial_crop_size,
         maxpool_kernel_size=maxpool_kernel_size,
