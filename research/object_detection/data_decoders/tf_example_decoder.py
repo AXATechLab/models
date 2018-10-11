@@ -191,8 +191,8 @@ class TfExampleDecoder(data_decoder.DataDecoder):
             tf.VarLenFeature(tf.float32),
         'image/object/bbox/ymax':
             tf.VarLenFeature(tf.float32),
-        'image/object/transcription':
-            tf.VarLenFeature(tf.string),
+        # 'image/object/transcription':
+        #     tf.VarLenFeature(tf.string),
         'image/object/class/label':
             tf.VarLenFeature(tf.int64),
         'image/object/class/text':
@@ -243,8 +243,8 @@ class TfExampleDecoder(data_decoder.DataDecoder):
         fields.InputDataFields.groundtruth_boxes: (
             slim_example_decoder.BoundingBox(['ymin', 'xmin', 'ymax', 'xmax'],
                                              'image/object/bbox/')),
-        fields.InputDataFields.groundtruth_transcription: 
-            slim_example_decoder.Tensor('image/object/transcription'),
+        # fields.InputDataFields.groundtruth_transcription: 
+            # slim_example_decoder.Tensor('image/object/transcription'),
         fields.InputDataFields.groundtruth_area:
             slim_example_decoder.Tensor('image/object/area'),
         fields.InputDataFields.groundtruth_is_crowd: (

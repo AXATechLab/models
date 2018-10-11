@@ -15,6 +15,6 @@ message DetectionModel {
     Ssd ssd = 2;
   }
   oneof transcription_model {
-  	CRNN crnn = 5 [default=None];
+  	CRNN crnn = 5;
   }
 }
