@@ -111,7 +111,8 @@ from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 
-sys.path.append("/notebooks/text-renderer/scripts")
+import sys
+sys.path.append("/notebooks/text-renderer/")
 import data_util
 
 slim = tf.contrib.slim
@@ -399,7 +400,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       raise ValueError('first_stage_anchor_generator must be of type '
                        'grid_anchor_generator.GridAnchorGenerator.')
 
-       # Michele: Proposals that override the RPN
+    # Michele: Proposals that override the RPN
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
     xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
     _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
