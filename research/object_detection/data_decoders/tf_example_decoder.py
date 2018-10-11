@@ -244,7 +244,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
             slim_example_decoder.BoundingBox(['ymin', 'xmin', 'ymax', 'xmax'],
                                              'image/object/bbox/')),
         fields.InputDataFields.groundtruth_transcription: 
-            slim_example_decoder.Tensor('image/object/transcription')
+            slim_example_decoder.Tensor('image/object/transcription'),
         fields.InputDataFields.groundtruth_area:
             slim_example_decoder.Tensor('image/object/area'),
         fields.InputDataFields.groundtruth_is_crowd: (

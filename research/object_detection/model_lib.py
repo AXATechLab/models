@@ -209,13 +209,15 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     params = params or {}
     total_loss, train_op, detections, export_outputs = None, None, None, None
     is_training = mode == tf.estimator.ModeKeys.TRAIN
+    two_stages = transcription_model_fn != None
 
     # Make sure to set the Keras learning phase. True during training,
     # False for inference.
     tf.keras.backend.set_learning_phase(is_training)
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
-    transcription_model = transcription_model_fn(detection_model, is_training=is_training)
+    if two_stages:
+      transcription_model = transcription_model_fn(detection_model, is_training=is_training)
     scaffold_fn = None
 
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -266,8 +268,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         prediction_dict = detection_model.predict(
             preprocessed_images,
             features[fields.InputDataFields.true_image_shape])
-        transcription_dict = transcription_model.predict(prediction_dict, None,
-          features[fields.InputDataFields.true_image_shape])
         for k, v in prediction_dict.items():
           if v.dtype == tf.bfloat16:
             prediction_dict[k] = tf.cast(v, tf.float32)
@@ -275,6 +275,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       prediction_dict = detection_model.predict(
           preprocessed_images,
           features[fields.InputDataFields.true_image_shape])
+      if two_stages:
+        transcription_dict = transcription_model.predict(prediction_dict,
+            features[fields.InputDataFields.true_image_shape])
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       detections = detection_model.postprocess(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
@@ -313,6 +316,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
+      if two_stages:
+        transcription_loss = transcription_model.loss(transcription_dict)
+        losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
         regularization_losses = tf.get_collection(
