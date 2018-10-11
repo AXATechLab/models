@@ -127,14 +127,8 @@ def build(model_config, is_training, add_summaries=True,
   if meta_architecture == 'ssd':
     return _build_ssd_model(model_config.ssd, is_training, add_summaries,
                             add_background_class)
-  if meta_architecture == 'faster_rcnn':
+  if meta_architecture == 'faster_rcnn' or meta_architecture == 'faster_rcnn_override_RPN' or meta_architecture == 'faster_rcnn_rpn_blend':
     return _build_faster_rcnn_model(model_config.faster_rcnn, is_training,
-                                    add_summaries, meta_architecture)
-  if meta_architecture == 'faster_rcnn_override_RPN':
-    return _build_faster_rcnn_model(model_config.faster_rcnn_override_RPN, is_training,
-                                    add_summaries, meta_architecture)
-  if meta_architecture == 'faster_rcnn_rpn_blend':
-    return _build_faster_rcnn_model(model_config.faster_rcnn_rpn_blend, is_training,
                                     add_summaries, meta_architecture)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
@@ -394,6 +388,7 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
       positive_fraction=frcnn_config.first_stage_positive_balance_fraction,
       is_static=frcnn_config.use_static_balanced_label_sampler and is_training)
   first_stage_max_proposals = frcnn_config.first_stage_max_proposals
+  first_stage_proposals_path = frcnn_config.first_stage_proposals_path
   if (frcnn_config.first_stage_nms_iou_threshold < 0 or
       frcnn_config.first_stage_nms_iou_threshold > 1.0):
     raise ValueError('iou_threshold not in [0, 1.0].')
@@ -514,6 +509,7 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
         initial_crop_size=initial_crop_size,
         maxpool_kernel_size=maxpool_kernel_size,
         maxpool_stride=maxpool_stride,
+        first_stage_proposals_path=first_stage_proposals_path,
         second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
         second_stage_mask_prediction_loss_weight=(
             second_stage_mask_prediction_loss_weight),
@@ -530,6 +526,7 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
         initial_crop_size=initial_crop_size,
         maxpool_kernel_size=maxpool_kernel_size,
         maxpool_stride=maxpool_stride,
+        first_stage_proposals_path=first_stage_proposals_path,
         second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
         second_stage_mask_prediction_loss_weight=(
             second_stage_mask_prediction_loss_weight),

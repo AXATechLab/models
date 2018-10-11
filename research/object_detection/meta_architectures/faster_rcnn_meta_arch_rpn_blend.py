@@ -239,6 +239,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                first_stage_nms_score_threshold,
                first_stage_nms_iou_threshold,
                first_stage_max_proposals,
+               first_stage_proposals_path,
                first_stage_localization_loss_weight,
                first_stage_objectness_loss_weight,
                initial_crop_size,
@@ -396,17 +397,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                        'grid_anchor_generator.GridAnchorGenerator.')
 
        # Michele: Proposals that override the RPN
-    f = open("/notebooks/data/templates/0.json", "r")
-    parsed_json = json.loads(f.read())
-    bboxes = parsed_json['objects']
-    width, height = parsed_json['image_w_h']
-    self.proposals = np.zeros((1, len(bboxes), 4), dtype='float32')
-    for i,bbox in enumerate(bboxes):
-      x_min, y_min, box_width, box_height = bbox['x_y_w_h']
-      x_max, y_max = x_min + box_width - 1, y_min + box_height - 1
-      x_min, x_max = x_min / width, x_max / width
-      y_min, y_max = y_min / height, y_max / height
-      self.proposals[0, i] = [y_min, x_min, y_max, x_max] # Tensorflow convention
+    first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
+    xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
+    _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn

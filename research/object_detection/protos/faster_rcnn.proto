@@ -168,6 +168,8 @@ message FasterRcnn {
   // Whether the masks present in groundtruth should be resized in the model to
   // match the image size.
   optional bool resize_masks = 36 [default = true];
+
+  optional string first_stage_proposals_path = 38 [default = ''];
 }
 
 

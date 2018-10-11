@@ -111,6 +111,8 @@ from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 import sys # for debug
+sys.path.append("/notebooks/accident-notebooks/scripts")
+import data_util
 
 slim = tf.contrib.slim
 
@@ -240,6 +242,7 @@ class FasterRCNNMetaArchOverrideRPN(model.DetectionModel):
                first_stage_nms_score_threshold,
                first_stage_nms_iou_threshold,
                first_stage_max_proposals,
+               first_stage_proposals_path,
                first_stage_localization_loss_weight,
                first_stage_objectness_loss_weight,
                initial_crop_size,
@@ -401,17 +404,9 @@ class FasterRCNNMetaArchOverrideRPN(model.DetectionModel):
                        'grid_anchor_generator.GridAnchorGenerator.')
 
     # Michele: Proposals that override the RPN
-    f = open("/notebooks/data/templates/0.json", "r")
-    parsed_json = json.loads(f.read())
-    bboxes = parsed_json['objects']
-    width, height = parsed_json['image_w_h']
-    self.proposals = np.zeros((1, len(bboxes), 4), dtype='float32')
-    for i,bbox in enumerate(bboxes):
-      x_min, y_min, box_width, box_height = bbox['x_y_w_h']
-      x_max, y_max = x_min + box_width, y_min + box_height
-      x_min, x_max = x_min / width, x_max / width
-      y_min, y_max = y_min / height, y_max / height
-      self.proposals[0, i] = [y_min, x_min, y_max, x_max] # Tensorflow convention
+    first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
+    xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
+    _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
 
     print("Shape of overriding proposals",self.proposals.shape)
 
