@@ -209,15 +209,16 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     params = params or {}
     total_loss, train_op, detections, export_outputs = None, None, None, None
     is_training = mode == tf.estimator.ModeKeys.TRAIN
-    two_stages = transcription_model_fn != None
 
     # Make sure to set the Keras learning phase. True during training,
     # False for inference.
     tf.keras.backend.set_learning_phase(is_training)
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
-    if two_stages:
-      transcription_model = transcription_model_fn(detection_model, is_training=is_training)
+    if transcription_model_fn != None:
+      transcription_model = transcription_model_fn(detection_model=detection_model, is_training=is_training)
+    two_stages = transcription_model != None
+
     scaffold_fn = None
 
     if mode == tf.estimator.ModeKeys.TRAIN:

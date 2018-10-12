@@ -96,10 +96,12 @@ FASTER_RCNN_FEATURE_EXTRACTOR_CLASS_MAP = {
     frcnn_resnet_v1.FasterRCNNResnet152FeatureExtractor,
 }
 
-def build_transcription(model_config, is_training, add_summaries=True):
+def build_transcription(model_config, detection_model, is_training, add_summaries=True):
   meta_architecture = model_config.WhichOneof('transcription_model')
+  if meta_architecture == None:
+    return None
   if meta_architecture == 'crnn':
-    return _build_crnn_model(model_config.crnn, is_training, add_summaries)
+    return _build_crnn_model(model_config.crnn, detection_model, is_training, add_summaries)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
 def build(model_config, is_training, add_summaries=True,

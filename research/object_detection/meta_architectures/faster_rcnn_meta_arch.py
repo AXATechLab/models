@@ -1286,8 +1286,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
       num_proposals,
       groundtruth_boxlists,
       groundtruth_classes_with_background_list,
-      groundtruth_weights_list,
-      groundtruth_transcriptions_list=[None]):
+      groundtruth_weights_list):
     """Samples a minibatch for second stage.
 
     Args:
@@ -1329,15 +1328,13 @@ class FasterRCNNMetaArch(model.DetectionModel):
          single_image_num_proposals,
          single_image_groundtruth_boxlist,
          single_image_groundtruth_classes_with_background,
-         single_image_groundtruth_weights,
-         single_image_groundtruth_transcriptions) in zip(
+         single_image_groundtruth_weights) in zip(
              tf.unstack(proposal_boxes),
              tf.unstack(proposal_scores),
              tf.unstack(num_proposals),
              groundtruth_boxlists,
              groundtruth_classes_with_background_list,
-             groundtruth_weights_list,
-             groundtruth_transcriptions_list):
+             groundtruth_weights_list):
       single_image_boxlist = box_list.BoxList(single_image_proposal_boxes)
       single_image_boxlist.add_field(fields.BoxListFields.scores,
                                      single_image_proposal_scores)
@@ -1346,8 +1343,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
           single_image_num_proposals,
           single_image_groundtruth_boxlist,
           single_image_groundtruth_classes_with_background,
-          single_image_groundtruth_weights,
-          single_image_groundtruth_transcriptions)
+          single_image_groundtruth_weights)
       sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
           sampled_boxlist,
           num_boxes=self._second_stage_batch_size)
