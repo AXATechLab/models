@@ -111,7 +111,7 @@ from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 
-import sys
+import sys, os
 sys.path.append("/notebooks/text-renderer/")
 import data_util
 
@@ -403,7 +403,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     # Michele: Proposals that override the RPN
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
     xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
-    _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
+    _, _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn
@@ -1003,6 +1003,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     #  anchors = box_list_ops.concatenate([anchors, box_list.BoxList(abs_field_anchors)])
       return abs_field_anchors
 
+    print(self.proposals)
     template_boxes = tf.constant(self.proposals, dtype=tf.float32) 
     #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer

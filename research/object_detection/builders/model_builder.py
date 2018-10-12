@@ -129,8 +129,14 @@ def build(model_config, is_training, add_summaries=True,
   if meta_architecture == 'ssd':
     return _build_ssd_model(model_config.ssd, is_training, add_summaries,
                             add_background_class)
-  if meta_architecture == 'faster_rcnn' or meta_architecture == 'faster_rcnn_override_RPN' or meta_architecture == 'faster_rcnn_rpn_blend':
+  if meta_architecture == 'faster_rcnn':
     return _build_faster_rcnn_model(model_config.faster_rcnn, is_training,
+                                    add_summaries, meta_architecture)
+  if meta_architecture == 'faster_rcnn_override_RPN':
+    return _build_faster_rcnn_model(model_config.faster_rcnn_override_RPN, is_training,
+                                    add_summaries, meta_architecture)
+  if meta_architecture == 'faster_rcnn_rpn_blend':
+    return _build_faster_rcnn_model(model_config.faster_rcnn_rpn_blend, is_training,
                                     add_summaries, meta_architecture)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
