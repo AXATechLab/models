@@ -399,15 +399,15 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
         category_index = label_map_util.create_category_index_from_labelmap(
             eval_input_config.label_map_path)
       vis_metric_ops = None
-      if not use_tpu and use_original_images:
-        eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
-            category_index,
-            max_examples_to_draw=eval_config.num_visualizations,
-            max_boxes_to_draw=eval_config.max_num_boxes_to_visualize,
-            min_score_thresh=eval_config.min_score_threshold,
-            use_normalized_coordinates=False)
-        vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
-            eval_dict)
+      # if not use_tpu and use_original_images:
+      #   eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
+      #       category_index,
+      #       max_examples_to_draw=eval_config.num_visualizations,
+      #       max_boxes_to_draw=eval_config.max_num_boxes_to_visualize,
+      #       min_score_thresh=eval_config.min_score_threshold,
+      #       use_normalized_coordinates=False)
+      #   vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
+      #       eval_dict)
 
       # Eval metrics on a single example.
       eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
