@@ -991,20 +991,21 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     def gen_field_anchors(bbox):
       y_min, x_min, y_max, x_max = tf.split(bbox, 4)
       height, width = (y_max - y_min + 1)[0], (x_max - x_min + 1)[0]
-      y_min = tf.Print(y_min, [y_min, x_min, y_max, x_max], message="Coords of template bbox")
+      # y_min = tf.Print(y_min, [y_min, x_min, y_max, x_max], message="Coords of template bbox")
      # field_shape = tf.concat([y_max - y_min, x_max - x_min], axis=0)
       field_anchors = self._first_stage_anchor_generator.generate([(height, width)])[0].get()
-      offset_y = tf.cast(y_min, dtype=tf.float32) * self._first_stage_anchor_generator._anchor_stride[0] + self._first_stage_anchor_generator._anchor_offset[0]
-      offset_x = tf.cast(x_min, dtype=tf.float32) * self._first_stage_anchor_generator._anchor_stride[1] + self._first_stage_anchor_generator._anchor_offset[1]
+      anchor_stride = self._first_stage_anchor_generator._anchor_stride
+      anchor_offset = self._first_stage_anchor_generator._anchor_offset
+      offset_y = tf.cast(y_min, dtype=tf.float32) * anchor_stride[0] + anchor_offset[0]
+      offset_x = tf.cast(x_min, dtype=tf.float32) * anchor_stride[1] + anchor_offset[1]
       abs_field_anchors = tf.add(field_anchors, 
-        tf.concat([offset_y, offset_x, offset_y, offset_x], axis=0))#, dtype=tf.float32))
+        tf.concat([offset_y, offset_x, offset_y, offset_x], axis=0))
 #      for j in range(field_anchors.shape[0]):
  #       field_anchors[j] +=
     #  anchors = box_list_ops.concatenate([anchors, box_list.BoxList(abs_field_anchors)])
       return abs_field_anchors
 
-    print(self.proposals)
-    template_boxes = tf.constant(self.proposals, dtype=tf.float32) 
+    template_boxes = tf.expand_dims(tf.constant(self.proposals, dtype=tf.float32), axis=0)
     #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer
     template_boxes = tf.cast(tf.squeeze(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
@@ -1500,8 +1501,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         groundtruth_classes_with_background,
         unmatched_class_label=tf.constant(
             [1] + self._num_classes * [0], dtype=tf.float32),
-        groundtruth_weights=groundtruth_weights,
-        groundtruth_transcriptions=groundtruth_transcriptions)
+        groundtruth_weights=groundtruth_weights)
     # Selects all boxes as candidates if none of them is selected according
     # to cls_weights. This could happen as boxes within certain IOU ranges
     # are ignored. If triggered, the selected boxes will still be ignored

@@ -207,10 +207,12 @@ class ConvolutionalClassHead(head.Head):
         # field_map = tf.slice(feature_map, [y_min, x_min, tf.constant([0])], [y_max - y_min + 1, x_max - x_min + 1, -1])
         field_map = feature_map[y_min[0]:(y_max[0] + 1), x_min[0]:(x_max[0] + 1), :]
         #field_map = tf.Print(field_map, [tf.shape(field_map)])
-
         return tf.reshape(field_map, [-1, num_class_slots])
-      field_prediction = partial(batch_field_prediction, feature_map=class_predictions_with_background[0], num_class_slots=num_class_slots)
-      anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields, dtype=tf.float32, as_list=True)
+
+      field_prediction = partial(batch_field_prediction, feature_map=class_predictions_with_background[0], 
+        num_class_slots=num_class_slots)
+      anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields, 
+        dtype=tf.float32, as_list=True)
       class_predictions_with_background = tf.reshape(tf.concat(anchor_list, axis=0), [1, -1, num_class_slots])
     #class_predictions_with_background = tf.Print(class_predictions_with_background, [tf.shape(class_predictions_with_background)], message="Class predictions shape ")
     return class_predictions_with_background
