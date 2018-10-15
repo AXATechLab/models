@@ -280,6 +280,7 @@ class DetectionModel(object):
     if groundtruth_masks_list:
       self._groundtruth_lists[
           fields.BoxListFields.masks] = groundtruth_masks_list
+    print(groundtruth_transcriptions_list)
     if groundtruth_transcriptions_list:
       self._groundtruth_lists[
           fields.BoxListFields.transcription] = groundtruth_transcriptions_list

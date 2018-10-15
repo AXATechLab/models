@@ -403,7 +403,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     # Michele: Proposals that override the RPN
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
     xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
-    _, _, self.proposals = data_util.xml_to_numpy(None, xml_root, normalize=True)
+    _, _, annotations = data_util.xml_to_numpy(None, xml_root, normalize=True)
+    self.proposals = annotations['gt_boxes']
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn

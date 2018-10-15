@@ -17,7 +17,8 @@ class CRNN(object):
     # TODO: use parameters instead of copying FasterRCNN's
     def predict(self, prediction_dict, true_image_shapes):
         # Postprocess FasterRCNN stage 2
-        detections_dict = self.detection_model._postprocess_box_classifier(
+        detection_model = self.detection_model
+        detections_dict = detection_model._postprocess_box_classifier(
             prediction_dict['refined_box_encodings'],
             prediction_dict['class_predictions_with_background'],
             prediction_dict['proposal_boxes'],

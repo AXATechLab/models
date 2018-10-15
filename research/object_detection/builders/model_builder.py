@@ -54,9 +54,10 @@ from object_detection.protos import model_pb2
 from object_detection.utils import ops
 
 import sys
-sys.path.append("~/Git/tf-crnn/")
-from object_detection.meta_architectures import crnn
+sys.path.append("/notebooks/Transcription/tf-crnn")
+from object_detection.meta_architectures.crnn import CRNN
 from src.config import Params, import_params_from_json
+
 
 # A map of names to SSD feature extractors.
 SSD_FEATURE_EXTRACTOR_CLASS_MAP = {
@@ -343,7 +344,7 @@ def _build_crnn_model(crnn_config, detection_model, is_training, add_summaries=T
   dict_params = import_params_from_json(json_filename=json_path)
   parameters = Params(**dict_params)
   crnn_target_assigner = target_assigner.create_target_assigner(
-      'CRNN', None,
+      'CRNN', 'transcription',
       use_matmul_gather=False,
       iou_threshold=crnn_config.assigner_iou_threshold)
   return CRNN(parameters, detection_model, crnn_target_assigner)  

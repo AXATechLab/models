@@ -420,7 +420,7 @@ def create_target_assigner(reference, stage=None,
     box_coder = faster_rcnn_box_coder.FasterRcnnBoxCoder()
 
   else:
-    raise ValueError('No valid combination of reference and stage.')
+    raise ValueError('No valid combination of reference and stage. (' + reference + ", " + stage + ")")
 
   return TargetAssigner(similarity_calc, matcher, box_coder,
                         negative_class_weight=negative_class_weight)
