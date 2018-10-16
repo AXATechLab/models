@@ -217,7 +217,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         is_training=is_training, add_summaries=(not use_tpu))
     if transcription_model_fn != None:
       transcription_model = transcription_model_fn(detection_model=detection_model, is_training=is_training)
-    two_stages = transcription_model != None
 
     scaffold_fn = None
 
@@ -264,6 +263,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
+    global_step = tf.train.get_or_create_global_step()
+    two_stages = transcription_model != None
+    transcription_loss = 0
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
         prediction_dict = detection_model.predict(
@@ -277,7 +279,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           preprocessed_images,
           features[fields.InputDataFields.true_image_shape])
       if two_stages:
-        transcription_dict = transcription_model.predict(prediction_dict,
+        print("Running E2E architecture")
+        transcription_loss = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape])
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       detections = detection_model.postprocess(
@@ -318,7 +321,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
       if two_stages:
-        transcription_loss = transcription_model.loss(transcription_dict)
+        # transcription_loss = transcription_model.loss(transcription_dict)
         losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
@@ -339,7 +342,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
 
       # TODO(rathodv): Stop creating optimizer summary vars in EVAL mode once we
       # can write learning rate summaries on TPU without host calls.
-      global_step = tf.train.get_or_create_global_step()
       training_optimizer, optimizer_summary_vars = optimizer_builder.build(
           train_config.optimizer)
 

@@ -259,9 +259,9 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
           max_num_pos = int(positive_fraction * batch_size)
         sampled_pos_idx = self.subsample_indicator(positive_idx, max_num_pos)
         num_sampled_pos = tf.reduce_sum(tf.cast(sampled_pos_idx, tf.int32))
-        # if stage == 'transcription':
-        #   return tf.cond(tf.less(num_sampled_pos, max_num_pos), 
-        #     lambda: tf.constant([], dtype=tf.bool), lambda: sampled_pos_idx)
+        if stage == 'transcription':
+          return tf.cond(tf.less(num_sampled_pos, max_num_pos), 
+            lambda: tf.constant([], dtype=tf.bool), lambda: sampled_pos_idx)
         if batch_size is None:
           negative_positive_ratio = (
               1 - positive_fraction) / positive_fraction
