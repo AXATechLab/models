@@ -1561,7 +1561,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
               parallel_iterations=self._parallel_iterations))
     else:
       if stage == 'transcription':
-        crop_size = (self._initial_crop_size, 2 * self._initial_crop_size)
+        crop_size = (self._initial_crop_size, 63)
       else:
         crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(

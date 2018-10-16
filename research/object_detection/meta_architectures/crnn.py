@@ -14,6 +14,7 @@ class CRNN(object):
         self.parameters = parameters
         self.detection_model = detection_model
         self.target_assigner = target_assigner
+        self.batch_size = 32
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
@@ -23,7 +24,7 @@ class CRNN(object):
     def predict(self, prediction_dict, true_image_shapes):
         if self.detection_model._is_training:
             global_step = tf.train.get_or_create_global_step()
-            return tf.cond(tf.less(global_step, 10), lambda: tf.constant(0, dtype=tf.float32),
+            return tf.cond(tf.less(global_step, 10), lambda: [tf.constant(0, dtype=tf.float32), ({}, None)],
                 partial(self._predict, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes))
         return self._predict(prediction_dict, true_image_shapes)
 
@@ -77,7 +78,7 @@ class CRNN(object):
             )
             sampled_indices = detection_model._second_stage_sampler.subsample(
                 valid_indicator,
-                detection_model._second_stage_batch_size,
+                self.batch_size,
                 positive_indicator,
                 stage="transcription")
 
@@ -86,23 +87,25 @@ class CRNN(object):
 
                 sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
                   sampled_boxlist,
-                  num_boxes=detection_model._second_stage_batch_size)
+                  num_boxes=self.batch_size)
                 detection_boxes = sampled_padded_boxlist.get()
                 detection_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.transcription)
                 # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the subsampled GTs transcr.", summarize=99999)
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
                 num_detections = tf.minimum(sampled_boxlist.num_boxes(),
-                  detection_model._second_stage_batch_size)
-                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
+                  self.batch_size)
+                transcriptions_dict, eval_metric_ops = self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
                         detection_scores, num_detections)
-                return self.loss(transcriptions_dict)
+                return [self.loss(transcriptions_dict), (transcriptions_dict, eval_metric_ops)]
 
-            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), lambda : tf.Print(tf.constant(0, dtype=tf.float32), [], message="Not enough boxes to train CRNN"),
+            fail = tf.Print(tf.constant(0, dtype=tf.float32), [], message="Not enough boxes to train CRNN")
+            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), lambda : [fail, ({}, None)],
                 compute_loss)   
 
         # return self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
         #             detection_scores, num_detections)
-        return tf.constant(0, dtype=tf.float32)
+        return [tf.constant(0, dtype=tf.float32), self._predict_lstm(rpn_features_to_crop, detection_boxes, 
+            detection_transcriptions, detection_scores, num_detections)]
 
 
 
@@ -125,9 +128,9 @@ class CRNN(object):
             'corpus' : tf.fill([shape[0]], 0),
             'image_width': shape[2],
         }
-        transcription_dict = self.lstm_layers(conv_reshaped, placeholder_features)
+        transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features)
         transcription_dict['labels'] = detection_transcriptions
-        return transcription_dict
+        return transcription_dict, eval_metric_ops
 
 
     def loss(self, predictions_dict):
@@ -205,6 +208,26 @@ class CRNN(object):
 
                 tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
 
-        return predictions_dict
+        # Evaluation ops
+        # --------------
+        if mode == tf.estimator.ModeKeys.EVAL:
+            with tf.name_scope('evaluation'):
+                CER = tf.metrics.mean(tf.edit_distance(sparse_code_pred[0], tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
+
+                # Convert label codes to decoding alphabet to compare predicted and groundtrouth words
+                target_chars = table_int2str.lookup(tf.cast(sparse_code_target, tf.int64))
+                target_words = get_words_from_chars(target_chars.values, seq_lengths_labels)
+                accuracy = tf.metrics.accuracy(target_words, predictions_dict['words'][0], name='accuracy')
+
+                eval_metric_ops = {
+                                   'eval/accuracy': accuracy,
+                                   'eval/CER': CER,
+                                   }
+                CER = tf.Print(CER, [CER], message='-- CER : ')
+                accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
+        else:
+            eval_metric_ops = None
+
+        return predictions_dict, eval_metric_ops
 
 
