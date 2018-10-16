@@ -205,7 +205,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         tf.cast(sampled_idx_indicator, tf.float32),
         reprojections, axes=[0, 0]), tf.bool)
 
-  def subsample(self, indicator, batch_size, labels, scope=None):
+  def subsample(self, indicator, batch_size, labels, scope=None, stage='detection'):
     """Returns subsampled minibatch.
 
     Args:
@@ -248,20 +248,26 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         negative_idx = tf.logical_and(negative_idx, indicator)
        # negative_idx = tf.Print(negative_idx, [tf.count_nonzero(negative_idx)], message="Num of Negatives ")
 
+        if stage == 'transcription':
+          positive_fraction = 1
+        else:
+          positive_fraction = self._positive_fraction
         # Sample positive and negative samples separately
         if batch_size is None:
           max_num_pos = tf.reduce_sum(tf.to_int32(positive_idx))
         else:
-          max_num_pos = int(self._positive_fraction * batch_size)
+          max_num_pos = int(positive_fraction * batch_size)
         sampled_pos_idx = self.subsample_indicator(positive_idx, max_num_pos)
         num_sampled_pos = tf.reduce_sum(tf.cast(sampled_pos_idx, tf.int32))
+        # if stage == 'transcription':
+        #   return tf.cond(tf.less(num_sampled_pos, max_num_pos), 
+        #     lambda: tf.constant([], dtype=tf.bool), lambda: sampled_pos_idx)
         if batch_size is None:
           negative_positive_ratio = (
-              1 - self._positive_fraction) / self._positive_fraction
+              1 - positive_fraction) / positive_fraction
           max_num_neg = tf.to_int32(
               negative_positive_ratio * tf.to_float(num_sampled_pos))
         else:
           max_num_neg = batch_size - num_sampled_pos
         sampled_neg_idx = self.subsample_indicator(negative_idx, max_num_neg)
-
         return tf.logical_or(sampled_pos_idx, sampled_neg_idx)
