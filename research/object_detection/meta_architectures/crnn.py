@@ -4,7 +4,8 @@ from core import box_list, box_list_ops
 from core import standard_fields as fields
 import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
-from src.model import deep_bidirectional_lstm
+from src.model import deep_bidirectional_lstm, get_words_from_chars
+from src.config import  CONST
 
 class CRNN(object):
 
@@ -31,15 +32,16 @@ class CRNN(object):
             fields.DetectionResultFields.detection_scores][0]
         detection_transcriptions = None
 
-        num_detections = detections_dict[
-            fields.DetectionResultFields.num_detections][0]
+        num_detections = tf.cast(detections_dict[
+            fields.DetectionResultFields.num_detections], tf.int32)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
         if detection_model._is_training:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
                 stage='transcription')
 
-            detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(detection_boxes))
+            detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(detection_boxes),
+                true_image_shapes[0, 0], true_image_shapes[0, 1])
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
 
             (_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist, 
@@ -48,16 +50,12 @@ class CRNN(object):
                 [1] + detection_model._num_classes * [0], dtype=tf.float32),
                 groundtruth_weights=gt_weights[0])
 
-            matching = match.match_results() # indices of matched groundtruths, or negative number if unmatched
-            detection_transcriptions = tf.constant([None] * num_detections, dtype=tf.string)
-            for dt_ind, gt_ind in enumerate(matching):
-                if gt_ind < 0:
-                    continue
-                detection_transcritpions[dt_ind] = gt_transcriptions[0][gt_ind]
+            detection_transcriptions = match.gather_based_on_match(gt_transcriptions[0], '', '')
             detection_boxlist.add_field(fields.BoxListFields.transcription, detection_transcriptions)
 
 
-            positive_indicator = tf.greater(matching, -1)
+            positive_indicator = match.matched_column_indicator()
+            positive_indicator = tf.Print(positive_indicator, [positive_indicator], message="positive_indicator", summarize=100)
             valid_indicator = tf.logical_and(
                 tf.range(detection_boxlist.num_boxes()) < num_detections,
                 cls_weights > 0
@@ -83,22 +81,30 @@ class CRNN(object):
         # Reuse the second stage cropping as-is
         flattened_detected_feature_maps = (
               detection_model._compute_second_stage_input_feature_maps(
-                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0)))
+                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription'))
 
+
+        with tf.variable_scope('Reshaping_cnn'):
+            shape = flattened_detected_feature_maps.get_shape().as_list()  # [batch, height, width, features]
+            transposed = tf.transpose(flattened_detected_feature_maps, perm=[0, 2, 1, 3],
+                                      name='transposed')  # [batch, width, height, features]
+            conv_reshaped = tf.reshape(transposed, [shape[0], -1, shape[1] * shape[3]],
+                                       name='reshaped')  # [batch, width, height x features]
         placeholder_features = {
-            'corpus' : tf.fill(0, shape=flattened_detected_feature_maps.shape),
-            'image_width': flattened_detected_feature_maps.shape[2],
-            'labels': detection_transcriptions
+            'corpus' : tf.fill([shape[0]], 0),
+            'image_width': shape[2],
         }
-
-        transcription_dict = self.lstm_layers(flattened_detected_feature_maps, placeholder_features)
-        transcription_dict['labels'] = detections_transcriptions
+        transcription_dict = self.lstm_layers(conv_reshaped, placeholder_features)
+        detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="!!!!!!!", summarize=99999)
+        transcription_dict['labels'] = detection_transcriptions
         return transcription_dict
 
     def loss(self, predictions_dict):
         # Alphabet and codes
+        parameters = self.parameters
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
+        seq_len_inputs = predictions_dict['seq_len_inputs']
 
         # Convert string label to code label
         with tf.name_scope('str2code_conversion'):
@@ -116,11 +122,11 @@ class CRNN(object):
         # Loss
         # ----
         # >>> Cannot have longer labels than predictions -> error
-
+        batch_size = predictions_dict['prob'].shape[1]
         with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
             loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
                                       inputs=predictions_dict['prob'],
-                                      sequence_length=tf.cast(seq_len_inputs, tf.int32),
+                                      sequence_length=tf.cast([seq_len_inputs] * batch_size, tf.int32),
                                       preprocess_collapse_repeated=False,
                                       ctc_merge_repeated=True,
                                       ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
@@ -133,14 +139,17 @@ class CRNN(object):
     # Code from crnn_fn
     def lstm_layers(self, feature_maps, features):
         parameters = self.parameters
+        mode = self.detection_model._is_training
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, features['corpus'], params=parameters, summaries=False)
 
         # Compute seq_len from image width
-        n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
-        seq_len_inputs = tf.divide(features['image_width'], n_pools, name='seq_len_input_op') - 1
-
+        # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
+        # seq_len_inputs = tf.divide(features['image_width'], n_pools, name='seq_len_input_op') - 1
+        seq_len_inputs = features['image_width']
+        batch_size = logprob.shape[1]
         predictions_dict = {'prob': logprob,
-                            'raw_predictions': raw_pred
+                            'raw_predictions': raw_pred,
+                            'seq_len_inputs': seq_len_inputs
                             }
            
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT, tf.estimator.ModeKeys.TRAIN]:
@@ -150,7 +159,7 @@ class CRNN(object):
                 table_int2str = tf.contrib.lookup.HashTable(tf.contrib.lookup.KeyValueTensorInitializer(keys, values), '?')
 
                 sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
-                                                                                  sequence_length=tf.cast(seq_len_inputs, tf.int32),
+                                                                                  sequence_length=tf.cast([seq_len_inputs] * batch_size, tf.int32),
                                                                                   merge_repeated=False,
                                                                                   beam_width=100,
                                                                                   top_paths=parameters.nb_logprob)

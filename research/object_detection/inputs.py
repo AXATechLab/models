@@ -218,6 +218,7 @@ def pad_input_data_to_static_shapes(tensor_dict, max_num_boxes, num_classes,
       fields.InputDataFields.groundtruth_is_crowd: [max_num_boxes],
       fields.InputDataFields.groundtruth_group_of: [max_num_boxes],
       fields.InputDataFields.groundtruth_area: [max_num_boxes],
+      fields.InputDataFields.groundtruth_transcription: [max_num_boxes],
       fields.InputDataFields.groundtruth_weights: [max_num_boxes],
       fields.InputDataFields.num_groundtruth_boxes: [],
       fields.InputDataFields.groundtruth_label_types: [max_num_boxes],
@@ -312,6 +313,7 @@ def _get_labels_dict(input_dict):
       fields.InputDataFields.groundtruth_keypoints,
       fields.InputDataFields.groundtruth_instance_masks,
       fields.InputDataFields.groundtruth_area,
+      fields.InputDataFields.groundtruth_transcription,
       fields.InputDataFields.groundtruth_is_crowd,
       fields.InputDataFields.groundtruth_difficult
   ]
@@ -469,6 +471,7 @@ def create_train_input_fn(train_config, train_input_config,
           num_classes=config_util.get_number_of_classes(model_config),
           spatial_image_shape=config_util.get_spatial_image_size(
               image_resizer_config))
+
       return (_get_features_dict(tensor_dict), _get_labels_dict(tensor_dict))
 
     dataset = INPUT_BUILDER_UTIL_MAP['dataset_build'](
