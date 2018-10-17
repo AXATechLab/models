@@ -19,16 +19,31 @@ class CRNN(object):
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+
+        self.zero_loss = tf.constant(0, dtype=tf.float32)
+        self.default_pred = {
+            'raw_predictions': tf.constant(0, dtype=tf.int64),
+            'labels': tf.constant('', dtype=tf.string), 
+            'seq_len_inputs': 0,
+            'prob': tf.constant(0, dtype=tf.float32),
+            'score': tf.constant(0, dtype=tf.float32),
+            'words': tf.constant('', dtype=tf.string)
+        }
+        self.default_eval_op = {
+            'eval/accuracy': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
+            'eval/CER': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
+        }
+        self.fail_training = lambda : [self.zero_loss, (self.default_pred, self.default_eval_op)]
     # This is in the same fashion as predict_third_stage's inference
     # TODO: use parameters instead of copying FasterRCNN's
-    def predict(self, prediction_dict, true_image_shapes):
-        if self.detection_model._is_training:
+    def predict(self, prediction_dict, true_image_shapes, mode):
+        if mode == tf.estimator.ModeKeys.TRAIN:
             global_step = tf.train.get_or_create_global_step()
-            return tf.cond(tf.less(global_step, 10), lambda: [tf.constant(0, dtype=tf.float32), ({}, None)],
-                partial(self._predict, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes))
-        return self._predict(prediction_dict, true_image_shapes)
+            return tf.cond(tf.less(global_step, 10), self.fail_training,
+                partial(self._predict, mode=mode, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes))
+        return self._predict(prediction_dict, true_image_shapes, mode)
 
-    def _predict(self, prediction_dict, true_image_shapes):
+    def _predict(self, prediction_dict, true_image_shapes, mode):
         # Postprocess FasterRCNN stage 2
         detection_model = self.detection_model
         detections_dict = detection_model._postprocess_box_classifier(
@@ -42,14 +57,14 @@ class CRNN(object):
           fields.DetectionResultFields.detection_boxes][0]
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0]
-        detection_transcriptions = None
+        detection_transcriptions = tf.constant('', dtype=tf.string)
 
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections], tf.int32)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
-        if detection_model._is_training:
+        if False and mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
                 stage='transcription')
 
@@ -81,6 +96,7 @@ class CRNN(object):
                 self.batch_size,
                 positive_indicator,
                 stage="transcription")
+            sampled_indices = tf.Print(sampled_indices, [], message="CRNN training step")
 
             def compute_loss():
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
@@ -94,23 +110,24 @@ class CRNN(object):
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
                 num_detections = tf.minimum(sampled_boxlist.num_boxes(),
                   self.batch_size)
+                sparse_code_target = self.str2code(detection_transcriptions)
                 transcriptions_dict, eval_metric_ops = self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
-                        detection_scores, num_detections)
-                return [self.loss(transcriptions_dict), (transcriptions_dict, eval_metric_ops)]
+                        detection_scores, num_detections, mode, sparse_code_target=sparse_code_target)
 
-            fail = tf.Print(tf.constant(0, dtype=tf.float32), [], message="Not enough boxes to train CRNN")
-            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), lambda : [fail, ({}, None)],
+                return [self.loss(transcriptions_dict, sparse_code_target), (transcriptions_dict, eval_metric_ops)]
+
+            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.fail_training,
                 compute_loss)   
 
         # return self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
         #             detection_scores, num_detections)
-        return [tf.constant(0, dtype=tf.float32), self._predict_lstm(rpn_features_to_crop, detection_boxes, 
-            detection_transcriptions, detection_scores, num_detections)]
+        return [self.zero_loss, self._predict_lstm(rpn_features_to_crop, detection_boxes, 
+            detection_transcriptions, detection_scores, num_detections, mode)]
 
 
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, detection_transcriptions, 
-        detection_scores, num_detections):
+        detection_scores, num_detections, mode, sparse_code_target=None):
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
         flattened_detected_feature_maps = (
@@ -128,26 +145,25 @@ class CRNN(object):
             'corpus' : tf.fill([shape[0]], 0),
             'image_width': shape[2],
         }
-        transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features)
+        transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features, mode, sparse_code_target)
         transcription_dict['labels'] = detection_transcriptions
         return transcription_dict, eval_metric_ops
 
 
-    def loss(self, predictions_dict):
-        # Alphabet and codes
-        seq_len_inputs = predictions_dict['seq_len_inputs']
-
+    def str2code(self, labels):
         # Convert string label to code label
         with tf.name_scope('str2code_conversion'):
             table_str2int = self.table_str2int 
-            splitted = tf.string_split(predictions_dict['labels'], delimiter='')
+            splitted = tf.string_split(labels, delimiter='')
             values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64)
             codes = table_str2int.lookup(values_int)
             codes = tf.cast(codes, tf.int32)
-            sparse_code_target = tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
+            return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
 
-        seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
-                                         minlength= tf.shape(predictions_dict['prob'])[1])
+    def loss(self, predictions_dict, sparse_code_target):
+        # Alphabet and codes
+        seq_len_inputs = predictions_dict['seq_len_inputs']
+
 
         # Loss
         # ----
@@ -167,9 +183,8 @@ class CRNN(object):
 
 
     # Code from crnn_fn
-    def lstm_layers(self, feature_maps, features):
+    def lstm_layers(self, feature_maps, features, mode, sparse_code_target=None):
         parameters = self.parameters
-        mode = self.detection_model._is_training
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, features['corpus'], params=parameters, summaries=False)
         # Compute seq_len from image width
         # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
@@ -212,6 +227,9 @@ class CRNN(object):
         # --------------
         if mode == tf.estimator.ModeKeys.EVAL:
             with tf.name_scope('evaluation'):
+
+                seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
+                                                 minlength= tf.shape(predictions_dict['prob'])[1])
                 CER = tf.metrics.mean(tf.edit_distance(sparse_code_pred[0], tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
 
                 # Convert label codes to decoding alphabet to compare predicted and groundtrouth words
@@ -223,10 +241,10 @@ class CRNN(object):
                                    'eval/accuracy': accuracy,
                                    'eval/CER': CER,
                                    }
-                CER = tf.Print(CER, [CER], message='-- CER : ')
-                accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
+                # CER = tf.Print(CER, [CER], message='-- CER : ')
+                # accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
         else:
-            eval_metric_ops = None
+            eval_metric_ops = self.default_eval_op
 
         return predictions_dict, eval_metric_ops
 
