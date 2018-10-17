@@ -265,7 +265,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     preprocessed_images = features[fields.InputDataFields.image]
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None
-    transcription_loss, transcription_dict = 0, {}  
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
         prediction_dict = detection_model.predict(
@@ -280,12 +279,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           features[fields.InputDataFields.true_image_shape])
       if two_stages:
         print("Running E2E architecture")
-        transcription_loss, (transcription_dict, eval_metric_ops) = transcription_model.predict(prediction_dict,
-            features[fields.InputDataFields.true_image_shape])
+        transcription_loss, (transcription_dict, transcription_eval_op) = transcription_model.predict(prediction_dict,
+            features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       detections = detection_model.postprocess(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
-      detections.update(transcription_dict)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if train_config.fine_tune_checkpoint and hparams.load_pretrained:
@@ -443,6 +441,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       if vis_metric_ops is not None:
         eval_metric_ops.update(vis_metric_ops)
       eval_metric_ops = {str(k): v for k, v in eval_metric_ops.items()}
+
+      detections.update(transcription_dict)
+      eval_metric_ops.update(transcription_eval_op)
 
       if eval_config.use_moving_averages:
         variable_averages = tf.train.ExponentialMovingAverage(0.0)

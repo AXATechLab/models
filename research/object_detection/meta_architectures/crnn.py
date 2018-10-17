@@ -19,16 +19,30 @@ class CRNN(object):
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+        self.default_pred = {
+            'prob': tf.constant(0, dtype=tf.float32),
+            'seq_len_inputs': 0,
+            'labels': tf.constant('', dtype=tf.string),
+            'raw_predictions': tf.constant(0, dtype=tf.int64)
+        }
+        self.default_eval_op = {
+
+        }
+        self.fail_training = lambda : [tf.constant(0, dtype=tf.float32), (
+                self.default_pred,
+                self.default_eval_op
+            )]
+
     # This is in the same fashion as predict_third_stage's inference
     # TODO: use parameters instead of copying FasterRCNN's
-    def predict(self, prediction_dict, true_image_shapes):
+    def predict(self, prediction_dict, true_image_shapes, mode):
         if self.detection_model._is_training:
             global_step = tf.train.get_or_create_global_step()
-            return tf.cond(tf.less(global_step, 10), lambda: [tf.constant(0, dtype=tf.float32), ({}, None)],
-                partial(self._predict, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes))
-        return self._predict(prediction_dict, true_image_shapes)
+            return tf.cond(tf.less(global_step, 10), self.fail_training,
+                partial(self._predict, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes, mode=mode))
+        return self._predict(prediction_dict, true_image_shapes, mode)
 
-    def _predict(self, prediction_dict, true_image_shapes):
+    def _predict(self, prediction_dict, true_image_shapes, mode):
         # Postprocess FasterRCNN stage 2
         detection_model = self.detection_model
         detections_dict = detection_model._postprocess_box_classifier(
@@ -42,7 +56,7 @@ class CRNN(object):
           fields.DetectionResultFields.detection_boxes][0]
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0]
-        detection_transcriptions = None
+        detection_transcriptions = tf.constant('', dtype=tf.string)
 
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections], tf.int32)
@@ -98,8 +112,7 @@ class CRNN(object):
                         detection_scores, num_detections)
                 return [self.loss(transcriptions_dict), (transcriptions_dict, eval_metric_ops)]
 
-            fail = tf.Print(tf.constant(0, dtype=tf.float32), [], message="Not enough boxes to train CRNN")
-            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), lambda : [fail, ({}, None)],
+            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.fail_training,
                 compute_loss)   
 
         # return self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
@@ -226,8 +239,7 @@ class CRNN(object):
                 CER = tf.Print(CER, [CER], message='-- CER : ')
                 accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
         else:
-            eval_metric_ops = None
+            eval_metric_ops = self.default_eval_op
 
         return predictions_dict, eval_metric_ops
-
 
