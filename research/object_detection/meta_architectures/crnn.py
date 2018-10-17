@@ -19,6 +19,11 @@ class CRNN(object):
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+        keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
+        values = [c for c in parameters.alphabet_decoding]
+        self.table_int2str = tf.contrib.lookup.HashTable(
+                tf.contrib.lookup.KeyValueTensorInitializer(keys, values), '?')
+
 
         self.zero_loss = tf.constant(0, dtype=tf.float32)
         self.default_pred = {
@@ -64,7 +69,7 @@ class CRNN(object):
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
-        if False and mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
+        if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes, 
                 stage='transcription')
 
@@ -198,9 +203,7 @@ class CRNN(object):
            
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT, tf.estimator.ModeKeys.TRAIN]:
             with tf.name_scope('code2str_conversion'):
-                keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
-                values = [c for c in parameters.alphabet_decoding]
-                table_int2str = tf.contrib.lookup.HashTable(tf.contrib.lookup.KeyValueTensorInitializer(keys, values), '?')
+                table_int2str = self.table_int2str
 
                 sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
                                                                                   sequence_length=tf.cast([seq_len_inputs] * batch_size, tf.int32),
@@ -221,13 +224,12 @@ class CRNN(object):
 
                 predictions_dict['words'] = tf.stack(list_preds)
 
-                tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
+                # tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
 
         # Evaluation ops
         # --------------
         if mode == tf.estimator.ModeKeys.EVAL:
             with tf.name_scope('evaluation'):
-
                 seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
                                                  minlength= tf.shape(predictions_dict['prob'])[1])
                 CER = tf.metrics.mean(tf.edit_distance(sparse_code_pred[0], tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
@@ -247,5 +249,4 @@ class CRNN(object):
             eval_metric_ops = self.default_eval_op
 
         return predictions_dict, eval_metric_ops
-
 
