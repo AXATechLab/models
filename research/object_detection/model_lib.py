@@ -477,7 +477,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           predictions=detections, 
           loss=total_loss,
           train_op=train_op,
-          eval_metric_ops=eval_metric_ops,
+          eval_metrics_ops=eval_metric_ops,
           export_outputs=export_outputs,
           scaffold=scaffold)
 

@@ -684,8 +684,7 @@ def get_eval_metric_ops_for_evaluators(eval_config,
   evaluator_options = evaluator_options_from_eval_config(eval_config)
   evaluators_list = get_evaluators(eval_config, categories, evaluator_options)
   for evaluator in evaluators_list:
-    eval_metric_ops.update(evaluator.get_estimator_eval_metric_ops(
-        eval_dict))
+    eval_metric_ops.update(evaluator.get_estimator_eval_metric_ops(eval_dict))
   return eval_metric_ops
 
 

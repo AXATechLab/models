@@ -18,7 +18,7 @@ class CRNN(object):
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
-                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), 0) # Cheating: prune special characters
         keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
         values = [c for c in parameters.alphabet_decoding]
         self.table_int2str = tf.contrib.lookup.HashTable(
@@ -106,7 +106,7 @@ class CRNN(object):
                 None,
                 positive_indicator,
                 stage="transcription")
-            sampled_indices = tf.Print(sampled_indices, [], message="CRNN step")
+            # sampled_indices = tf.Print(sampled_indices, [], message="CRNN step")
 
             def compute_loss():
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
@@ -167,6 +167,7 @@ class CRNN(object):
             table_str2int = self.table_str2int 
             splitted = tf.string_split(labels, delimiter='')
             values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64)
+            # values_int = tf.Print(values_int, [labels], summarize=9999999)
             codes = table_str2int.lookup(values_int)
             codes = tf.cast(codes, tf.int32)
             return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
@@ -187,7 +188,7 @@ class CRNN(object):
                                       ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
                                       time_major=True)
             loss_ctc = tf.reduce_mean(loss_ctc)
-            loss_ctc = tf.Print(loss_ctc, [loss_ctc], message='* Loss : ')
+            # loss_ctc = tf.Print(loss_ctc, [loss_ctc], message='* Loss : ')
         return loss_ctc
 
 
