@@ -619,10 +619,10 @@ def result_dict_for_single_example(image,
       output_dict[input_data_fields.groundtruth_classes] = groundtruth_classes
 
     # Handle transcription stage
-    if 'words' in detections:
-      output_dict['transcription_prob'] = detections['prob']
-      output_dict['transcription_words'] = detections['words']
-      output_dict['transcription_raw'] = detections['raw_predictions']
+    # if 'words' in detections:
+    #   output_dict['transcription_prob'] = detections['prob']
+    #   output_dict['transcription_words'] = detections['words']
+    #   output_dict['transcription_raw'] = detections['raw_predictions']
   return output_dict
 
 
