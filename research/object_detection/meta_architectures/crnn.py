@@ -46,7 +46,7 @@ class CRNN(object):
             predict_fn = partial(self._predict, mode=mode, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes)
             if mode == tf.estimator.ModeKeys.TRAIN:
                 global_step = tf.train.get_or_create_global_step()
-                step_switch = tf.less(global_step, 10)
+                step_switch = tf.less(global_step, 1)
             else:
                 step_switch = tf.constant(False, dtype=tf.bool)
             return tf.cond(step_switch, self.empty_pred, predict_fn)
@@ -103,7 +103,7 @@ class CRNN(object):
             )
             sampled_indices = detection_model._second_stage_sampler.subsample(
                 valid_indicator,
-                self.batch_size,
+                None,
                 positive_indicator,
                 stage="transcription")
             sampled_indices = tf.Print(sampled_indices, [], message="CRNN step")
@@ -111,9 +111,10 @@ class CRNN(object):
             def compute_loss():
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
-                sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
-                  sampled_boxlist,
-                  num_boxes=self.batch_size)
+                # sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
+                #   sampled_boxlist,
+                #   num_boxes=self.batch_size)
+                sampled_padded_boxlist = sampled_boxlist
                 detection_boxes = sampled_padded_boxlist.get()
                 detection_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.transcription)
                 # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the subsampled GTs transcr.", summarize=99999)
@@ -146,12 +147,13 @@ class CRNN(object):
 
         with tf.variable_scope('Reshaping_cnn'):
             shape = flattened_detected_feature_maps.get_shape().as_list()  # [batch, height, width, features]
+            print(shape)
             transposed = tf.transpose(flattened_detected_feature_maps, perm=[0, 2, 1, 3],
                                       name='transposed')  # [batch, width, height, features]
-            conv_reshaped = tf.reshape(transposed, [shape[0], -1, shape[1] * shape[3]],
+            conv_reshaped = tf.reshape(transposed, [-1, shape[2], shape[1] * shape[3]],
                                        name='reshaped')  # [batch, width, height x features]
         placeholder_features = {
-            'corpus' : tf.fill([shape[0]], 0),
+            'corpus' : tf.zeros_like(detection_scores, dtype=tf.int32),
             'image_width': shape[2],
         }
         transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features, mode, sparse_code_target)
@@ -172,8 +174,6 @@ class CRNN(object):
     def loss(self, predictions_dict, sparse_code_target):
         # Alphabet and codes
         seq_len_inputs = predictions_dict['seq_len_inputs']
-
-
         # Loss
         # ----
         # >>> Cannot have longer labels than predictions -> error
@@ -181,7 +181,7 @@ class CRNN(object):
         with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
             loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
                                       inputs=predictions_dict['prob'],
-                                      sequence_length=tf.cast([seq_len_inputs] * batch_size, tf.int32),
+                                      sequence_length=seq_len_inputs,#tf.cast([seq_len_inputs] * batch_size, tf.int32),
                                       preprocess_collapse_repeated=False,
                                       ctc_merge_repeated=True,
                                       ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
@@ -199,7 +199,7 @@ class CRNN(object):
         # Compute seq_len from image width
         # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
         # seq_len_inputs = tf.divide(features['image_width'], n_pools, name='seq_len_input_op') - 1
-        seq_len_inputs = features['image_width']
+        seq_len_inputs = tf.zeros_like(features['corpus']) + features['image_width']
         batch_size = logprob.shape[1]
         predictions_dict = {'prob': logprob,
                             'raw_predictions': raw_pred,
@@ -211,10 +211,11 @@ class CRNN(object):
                 table_int2str = self.table_int2str
 
                 sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
-                                                                                  sequence_length=tf.cast([seq_len_inputs] * batch_size, tf.int32),
+                                                                                  sequence_length=seq_len_inputs,#tf.cast([seq_len_inputs] * batch_size, tf.int32),
                                                                                   merge_repeated=False,
                                                                                   beam_width=100,
                                                                                   top_paths=parameters.nb_logprob)
+
                 # confidence value
 
                 predictions_dict['score'] = log_probability
