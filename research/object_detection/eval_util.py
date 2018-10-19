@@ -24,7 +24,7 @@ from object_detection.core import box_list
 from object_detection.core import box_list_ops
 from object_detection.core import keypoint_ops
 from object_detection.core import standard_fields as fields
-from object_detection.metrics import coco_evaluation
+from object_detection.metrics import coco_evaluation, transcription_evaluation
 from object_detection.utils import label_map_util
 from object_detection.utils import ops
 from object_detection.utils import visualization_utils as vis_utils
@@ -39,6 +39,8 @@ EVAL_METRICS_CLASS_DICT = {
         coco_evaluation.CocoDetectionEvaluator,
     'coco_mask_metrics':
         coco_evaluation.CocoMaskEvaluator,
+    'transcription_metrics': 
+        transcription_evaluation.TranscriptionEvaluator
 }
 
 EVAL_DEFAULT_METRIC = 'coco_detection_metrics'
@@ -616,6 +618,11 @@ def result_dict_for_single_example(image,
       groundtruth_classes = tf.ones_like(groundtruth_classes, dtype=tf.int64)
       output_dict[input_data_fields.groundtruth_classes] = groundtruth_classes
 
+    # Handle transcription stage
+    if 'words' in detections:
+      output_dict['transcription_prob'] = detections['prob']
+      output_dict['transcription_words'] = detections['words']
+      output_dict['transcription_raw'] = detections['raw_predictions']
   return output_dict
 
 

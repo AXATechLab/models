@@ -14,7 +14,7 @@ class CRNN(object):
         self.parameters = parameters
         self.detection_model = detection_model
         self.target_assigner = target_assigner
-        self.batch_size = 32
+        self.batch_size = 1
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
@@ -38,15 +38,20 @@ class CRNN(object):
             'eval/accuracy': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
             'eval/CER': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
         }
-        self.fail_training = lambda : [self.zero_loss, (self.default_pred, self.default_eval_op)]
+        self.empty_pred = lambda : [self.zero_loss, (self.default_pred, self.default_eval_op)]
     # This is in the same fashion as predict_third_stage's inference
     # TODO: use parameters instead of copying FasterRCNN's
     def predict(self, prediction_dict, true_image_shapes, mode):
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            global_step = tf.train.get_or_create_global_step()
-            return tf.cond(tf.less(global_step, 10), self.fail_training,
-                partial(self._predict, mode=mode, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes))
-        return self._predict(prediction_dict, true_image_shapes, mode)
+        with tf.variable_scope('crnn'):
+            predict_fn = partial(self._predict, mode=mode, prediction_dict=prediction_dict, true_image_shapes=true_image_shapes)
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                global_step = tf.train.get_or_create_global_step()
+                step_switch = tf.less(global_step, 10)
+            else:
+                step_switch = tf.constant(False, dtype=tf.bool)
+            return tf.cond(step_switch, self.empty_pred, predict_fn)
+
+
 
     def _predict(self, prediction_dict, true_image_shapes, mode):
         # Postprocess FasterRCNN stage 2
@@ -101,7 +106,7 @@ class CRNN(object):
                 self.batch_size,
                 positive_indicator,
                 stage="transcription")
-            sampled_indices = tf.Print(sampled_indices, [], message="CRNN training step")
+            sampled_indices = tf.Print(sampled_indices, [], message="CRNN step")
 
             def compute_loss():
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
@@ -121,13 +126,12 @@ class CRNN(object):
 
                 return [self.loss(transcriptions_dict, sparse_code_target), (transcriptions_dict, eval_metric_ops)]
 
-            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.fail_training,
+            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.empty_pred,
                 compute_loss)   
 
-        # return self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
-        #             detection_scores, num_detections)
-        return [self.zero_loss, self._predict_lstm(rpn_features_to_crop, detection_boxes, 
-            detection_transcriptions, detection_scores, num_detections, mode)]
+        predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, detection_boxes, 
+                detection_transcriptions, detection_scores, num_detections, mode)]
+        return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn, self.empty_pred)
 
 
 
@@ -190,6 +194,7 @@ class CRNN(object):
     # Code from crnn_fn
     def lstm_layers(self, feature_maps, features, mode, sparse_code_target=None):
         parameters = self.parameters
+
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, features['corpus'], params=parameters, summaries=False)
         # Compute seq_len from image width
         # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
@@ -228,25 +233,7 @@ class CRNN(object):
 
         # Evaluation ops
         # --------------
-        if mode == tf.estimator.ModeKeys.EVAL:
-            with tf.name_scope('evaluation'):
-                seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
-                                                 minlength= tf.shape(predictions_dict['prob'])[1])
-                CER = tf.metrics.mean(tf.edit_distance(sparse_code_pred[0], tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
-
-                # Convert label codes to decoding alphabet to compare predicted and groundtrouth words
-                target_chars = table_int2str.lookup(tf.cast(sparse_code_target, tf.int64))
-                target_words = get_words_from_chars(target_chars.values, seq_lengths_labels)
-                accuracy = tf.metrics.accuracy(target_words, predictions_dict['words'][0], name='accuracy')
-
-                eval_metric_ops = {
-                                   'eval/accuracy': accuracy,
-                                   'eval/CER': CER,
-                                   }
-                # CER = tf.Print(CER, [CER], message='-- CER : ')
-                # accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
-        else:
-            eval_metric_ops = self.default_eval_op
+        eval_metric_ops = self.default_eval_op
 
         return predictions_dict, eval_metric_ops
 

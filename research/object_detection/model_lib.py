@@ -282,8 +282,10 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         transcription_loss, (transcription_dict, transcription_eval_op) = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
-      detections = detection_model.postprocess(
+      detections = detection_model.postprocess(# rework this
           prediction_dict, features[fields.InputDataFields.true_image_shape])
+      if two_stages:
+        detections.update(transcription_dict)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if train_config.fine_tune_checkpoint and hparams.load_pretrained:
@@ -452,11 +454,13 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
 
-        # Concat with transcription eval
-        eval_metric_ops.update(transcription_eval_op)
-        detections.update(transcription_dict)
+      # Concat with transcription eval
+      # eval_metric_ops  = transcription_eval_op
+      # print(eval_metric_ops)
+      debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
 
-      
+      # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
+
     # EVAL executes on CPU, so use regular non-TPU EstimatorSpec.
     if use_tpu and mode != tf.estimator.ModeKeys.EVAL:
       return tf.contrib.tpu.TPUEstimatorSpec(
@@ -473,7 +477,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           predictions=detections, 
           loss=total_loss,
           train_op=train_op,
-          eval_metric_ops=None,
+          eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
           scaffold=scaffold)
 
