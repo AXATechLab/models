@@ -233,7 +233,23 @@ class CRNN(object):
 
         # Evaluation ops
         # --------------
-        eval_metric_ops = self.default_eval_op
+        if mode == tf.estimator.ModeKeys.EVAL:
+            with tf.name_scope('evaluation'):
+              seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
+                                                 minlength= tf.shape(predictions_dict['prob'])[1])
+              CER, CER_op = tf.metrics.mean(tf.edit_distance(sparse_code_pred[0], tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
+              # Convert label codes to decoding alphabet to compare predicted and groundtrouth words
+              target_chars = table_int2str.lookup(tf.cast(sparse_code_target, tf.int64))
+              target_words = get_words_from_chars(target_chars.values, seq_lengths_labels)
+              accuracy, accuracy_op = tf.metrics.accuracy(target_words, predictions_dict['words'][0], name='accuracy')
+              CER = tf.Print(CER, [CER], message='-- CER : ')
+              accuracy = tf.Print(accuracy, [accuracy], message='-- Accuracy : ')
+              eval_metric_ops = {
+                                 'eval/accuracy': (accuracy, accuracy_op),
+                                 'eval/CER': (CER, CER_op),
+                                 }
+        else:                        
+            eval_metric_ops = self.default_eval_op
 
         return predictions_dict, eval_metric_ops
 

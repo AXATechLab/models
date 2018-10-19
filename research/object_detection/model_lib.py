@@ -453,12 +453,12 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             variables_to_restore,
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
+      total_loss = tf.Print(total_loss, [transcription_eval_op['eval/accuracy'], transcription_eval_op['eval/CER']])
 
       # Concat with transcription eval
       # eval_metric_ops  = transcription_eval_op
       # print(eval_metric_ops)
-      debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
-
+      # debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
       # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
 
     # EVAL executes on CPU, so use regular non-TPU EstimatorSpec.
