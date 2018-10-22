@@ -33,7 +33,7 @@ class CRNN(object):
         self.no_postprocessing = {
             'detection_boxes' : tf.constant(0, dtype=tf.float32),
             'detection_scores' : tf.constant(0, dtype=tf.float32),
-            'num_detections' : tf.constant(0, dtype=tf.int32)
+            'num_detections' : tf.constant(0, dtype=tf.float32)
         }
 
 
@@ -82,9 +82,8 @@ class CRNN(object):
         detection_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop('detection_classes')
 
-        detections_dict['num_detections'] = tf.cast(detections_dict[
-            fields.DetectionResultFields.num_detections], tf.int32)
-        num_detections = detections_dict['num_detections']
+        num_detections = tf.cast(detections_dict[
+            fields.DetectionResultFields.num_detections][0], tf.int32)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
@@ -128,7 +127,9 @@ class CRNN(object):
                 # sampled_padded_boxlist = box_list_ops.pad_or_clip_box_list(
                 #   sampled_boxlist,
                 #   num_boxes=self.batch_size)
-                sampled_padded_boxlist = sampled_boxlist
+                normalized_sampled_boxlist = box_list_ops.to_normalized_coordinates(sampled_boxlist,
+                    true_image_shapes[0, 0], true_image_shapes[0, 1])
+                sampled_padded_boxlist = normalized_sampled_boxlist
                 detection_boxes = sampled_padded_boxlist.get()
                 detection_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.transcription)
                 # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the subsampled GTs transcr.", summarize=99999)
@@ -172,9 +173,13 @@ class CRNN(object):
         }
         transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features, mode, sparse_code_target)
         transcription_dict['labels'] = detection_transcriptions
-        transcription_dict['detection_boxes'] = detection_boxes
-        transcription_dict['detection_scores'] = detection_scores
-        transcription_dict['num_detections'] = num_detections
+        detections_dict = {}
+        detections_dict['detection_boxes'] = detection_boxes
+        detections_dict['detection_scores'] = detection_scores
+        detections_dict['num_detections'] = tf.cast(num_detections, dtype=tf.float32)
+        for k,v in detections_dict.items():
+            detections_dict[k] = tf.expand_dims(v, axis=0)
+        transcription_dict.update(detections_dict)
         return transcription_dict, eval_metric_ops
 
 
@@ -187,7 +192,7 @@ class CRNN(object):
             # values_int = tf.Print(values_int, [labels], summarize=9999999)
             codes = table_str2int.lookup(values_int)
             codes = tf.cast(codes, tf.int32)
-            return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
+            return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape) 
 
     def loss(self, predictions_dict, sparse_code_target):
         # Alphabet and codes
