@@ -14,7 +14,6 @@ class CRNN(object):
         self.parameters = parameters
         self.detection_model = detection_model
         self.target_assigner = target_assigner
-        self.batch_size = 1
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
@@ -26,7 +25,23 @@ class CRNN(object):
 
 
         self.zero_loss = tf.constant(0, dtype=tf.float32)
-        self.default_pred = {
+
+        self.default_eval_op = {
+            'eval/accuracy': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
+            'eval/CER': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
+        }
+        self.no_postprocessing = {
+            'detection_boxes' : tf.constant(0, dtype=tf.float32),
+            'detection_scores' : tf.constant(0, dtype=tf.float32),
+            'num_detections' : tf.constant(0, dtype=tf.int32)
+        }
+
+
+    def no_result(self, detections_dict):
+        return lambda : [self.zero_loss, (self.empty_pred(detections_dict), self.default_eval_op)]
+
+    def empty_pred(self, detections_dict):
+        transcriptions_dict = {
             'raw_predictions': tf.constant(0, dtype=tf.int64),
             'labels': tf.constant('', dtype=tf.string), 
             'seq_len_inputs': 0,
@@ -34,11 +49,9 @@ class CRNN(object):
             'score': tf.constant(0, dtype=tf.float32),
             'words': tf.constant('', dtype=tf.string)
         }
-        self.default_eval_op = {
-            'eval/accuracy': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
-            'eval/CER': (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
-        }
-        self.empty_pred = lambda : [self.zero_loss, (self.default_pred, self.default_eval_op)]
+        transcriptions_dict.update(detections_dict)
+        return transcriptions_dict
+
     # This is in the same fashion as predict_third_stage's inference
     # TODO: use parameters instead of copying FasterRCNN's
     def predict(self, prediction_dict, true_image_shapes, mode):
@@ -49,7 +62,7 @@ class CRNN(object):
                 step_switch = tf.less(global_step, 1)
             else:
                 step_switch = tf.constant(False, dtype=tf.bool)
-            return tf.cond(step_switch, self.empty_pred, predict_fn)
+            return tf.cond(step_switch, self.no_result(self.no_postprocessing), predict_fn)
 
 
 
@@ -62,15 +75,16 @@ class CRNN(object):
             prediction_dict['proposal_boxes'],
             prediction_dict['num_proposals'],
             true_image_shapes)
-        prediction_dict.update(detections_dict)
         detection_boxes = detections_dict[
           fields.DetectionResultFields.detection_boxes][0]
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0]
         detection_transcriptions = tf.constant('', dtype=tf.string)
+        detections_dict.pop('detection_classes')
 
-        num_detections = tf.cast(detections_dict[
+        detections_dict['num_detections'] = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections], tf.int32)
+        num_detections = detections_dict['num_detections']
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
@@ -119,20 +133,20 @@ class CRNN(object):
                 detection_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.transcription)
                 # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the subsampled GTs transcr.", summarize=99999)
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
-                num_detections = tf.minimum(sampled_boxlist.num_boxes(),
-                  self.batch_size)
+                # tf.minimum(sampled_boxlist.num_boxes(), self.batch_size)
+                num_detections = sampled_boxlist.num_boxes()           
                 sparse_code_target = self.str2code(detection_transcriptions)
                 transcriptions_dict, eval_metric_ops = self._predict_lstm(rpn_features_to_crop, detection_boxes, detection_transcriptions, 
                         detection_scores, num_detections, mode, sparse_code_target=sparse_code_target)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), (transcriptions_dict, eval_metric_ops)]
 
-            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.empty_pred,
+            return tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0), self.no_result(detections_dict),
                 compute_loss)   
 
         predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, detection_boxes, 
                 detection_transcriptions, detection_scores, num_detections, mode)]
-        return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn, self.empty_pred)
+        return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn, self.no_result(detections_dict))
 
 
 
@@ -158,6 +172,9 @@ class CRNN(object):
         }
         transcription_dict, eval_metric_ops = self.lstm_layers(conv_reshaped, placeholder_features, mode, sparse_code_target)
         transcription_dict['labels'] = detection_transcriptions
+        transcription_dict['detection_boxes'] = detection_boxes
+        transcription_dict['detection_scores'] = detection_scores
+        transcription_dict['num_detections'] = num_detections
         return transcription_dict, eval_metric_ops
 
 
@@ -201,7 +218,6 @@ class CRNN(object):
         # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
         # seq_len_inputs = tf.divide(features['image_width'], n_pools, name='seq_len_input_op') - 1
         seq_len_inputs = tf.zeros_like(features['corpus']) + features['image_width']
-        batch_size = logprob.shape[1]
         predictions_dict = {'prob': logprob,
                             'raw_predictions': raw_pred,
                             'seq_len_inputs': seq_len_inputs
@@ -212,7 +228,7 @@ class CRNN(object):
                 table_int2str = self.table_int2str
 
                 sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
-                                                                                  sequence_length=seq_len_inputs,#tf.cast([seq_len_inputs] * batch_size, tf.int32),
+                                                                                  sequence_length=seq_len_inputs,
                                                                                   merge_repeated=False,
                                                                                   beam_width=100,
                                                                                   top_paths=parameters.nb_logprob)

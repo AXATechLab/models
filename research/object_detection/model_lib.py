@@ -98,6 +98,9 @@ def _prepare_groundtruth_for_eval(detection_model, class_agnostic):
   if detection_model.groundtruth_has_field(fields.BoxListFields.is_crowd):
     groundtruth[input_data_fields.groundtruth_is_crowd] = (
         detection_model.groundtruth_lists(fields.BoxListFields.is_crowd)[0])
+  if detection_model.groundtruth_has_field(fields.BoxListFields.transcription):
+    groundtruth[input_data_fields.groundtruth_transcription] = (
+        detection_model.groundtruth_lists(fields.BoxListFields.transcription)[0])
   return groundtruth
 
 
@@ -207,7 +210,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         configurations.
     """
     params = params or {}
-    total_loss, train_op, detections, export_outputs = None, None, None, None
+    total_loss, train_op, final_response, export_outputs = None, None, None, None
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
@@ -282,10 +285,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         transcription_loss, (transcription_dict, transcription_eval_op) = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
-      detections = detection_model.postprocess(# rework this
-          prediction_dict, features[fields.InputDataFields.true_image_shape])
       if two_stages:
-        detections.update(transcription_dict)
+        final_response = transcription_dict
+      else:
+        final_response = detection_model.postprocess(
+          prediction_dict, features[fields.InputDataFields.true_image_shape])
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if train_config.fine_tune_checkpoint and hparams.load_pretrained:
@@ -390,14 +394,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode == tf.estimator.ModeKeys.PREDICT:
       export_outputs = {
           tf.saved_model.signature_constants.PREDICT_METHOD_NAME:
-              tf.estimator.export.PredictOutput(detections)
+              tf.estimator.export.PredictOutput(final_response)
       }
 
     eval_metric_ops = None
     scaffold = None
     if mode == tf.estimator.ModeKeys.EVAL:
       class_agnostic = (
-          fields.DetectionResultFields.detection_classes not in detections)
+          fields.DetectionResultFields.detection_classes not in final_response)
       groundtruth = _prepare_groundtruth_for_eval(detection_model,
                                                   class_agnostic)
       use_original_images = fields.InputDataFields.original_image in features
@@ -412,7 +416,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           eval_images[0:1],
           #eval_images[img_i:(img_i+1)],
           features[inputs.HASH_KEY][0],
-          detections,
+          final_response,
           groundtruth,
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
@@ -453,7 +457,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             variables_to_restore,
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
-      total_loss = tf.Print(total_loss, [transcription_eval_op['eval/accuracy'], transcription_eval_op['eval/CER']])
+      if two_stages:
+        total_loss = tf.Print(total_loss, [transcription_eval_op['eval/accuracy'], transcription_eval_op['eval/CER'], 
+          transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
       # Concat with transcription eval
       # eval_metric_ops  = transcription_eval_op
@@ -466,7 +472,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       return tf.contrib.tpu.TPUEstimatorSpec(
           mode=mode,
           scaffold_fn=scaffold_fn,
-          predictions=detections,
+          predictions=final_response,
           loss=total_loss,
           train_op=train_op,
           eval_metrics=eval_metric_ops,
@@ -474,7 +480,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     else:
       return tf.estimator.EstimatorSpec(
           mode=mode,
-          predictions=detections,
+          predictions=final_response,
           loss=total_loss,
           train_op=train_op,
           eval_metric_ops=eval_metric_ops,
