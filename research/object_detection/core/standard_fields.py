@@ -145,6 +145,7 @@ class BoxListFields(object):
   boxes = 'boxes'
   classes = 'classes'
   transcription = 'transcription'
+  corpus = 'corpus'
   scores = 'scores'
   weights = 'weights'
   objectness = 'objectness'

@@ -404,7 +404,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
     xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
     _, _, annotations = data_util.xml_to_numpy(None, xml_root, normalize=True)
-    self.proposals = annotations['gt_boxes']
+    self.template_proposals = annotations['gt_boxes']
+    self.template_corpora = annotations['gt_corpora']
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn
@@ -989,7 +990,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           box_list.BoxList(proposal_boxes_per_image), feat_shape[1],
           feat_shape[2], check_range=False).get()
       return normalized_boxes_per_image    
-    def gen_field_anchors(bbox):
+    def gen_field_anchors(args):
+      bbox = args[0]
+      corpus = args[1]
       y_min, x_min, y_max, x_max = tf.split(bbox, 4)
       height, width = (y_max - y_min + 1)[0], (x_max - x_min + 1)[0]
       # y_min = tf.Print(y_min, [y_min, x_min, y_max, x_max], message="Coords of template bbox")
@@ -1001,23 +1004,26 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       offset_x = tf.cast(x_min, dtype=tf.float32) * anchor_stride[1] + anchor_offset[1]
       abs_field_anchors = tf.add(field_anchors, 
         tf.concat([offset_y, offset_x, offset_y, offset_x], axis=0))
-#      for j in range(field_anchors.shape[0]):
- #       field_anchors[j] +=
-    #  anchors = box_list_ops.concatenate([anchors, box_list.BoxList(abs_field_anchors)])
-      return abs_field_anchors
+      return abs_field_anchors, corpus
+    def tensors_to_boxlists(args):
+      tens, corpus = args
+      anchors = box_list.BoxList(tens)
+      anchors.add_field(fields.BoxListFields.corpus, tf.fill([anchors.num_boxes()], corpus))
+      return anchors
 
-    template_boxes = tf.expand_dims(tf.constant(self.proposals, dtype=tf.float32), axis=0)
+    template_boxes = tf.expand_dims(tf.constant(self.template_proposals, dtype=tf.float32), axis=0)
+    template_corpora = tf.constant(self.template_corpora, dtype=tf.int32)
+
     #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer
     template_boxes = tf.cast(tf.squeeze(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
       to_absolute_boxes, elems=[template_boxes, batch_shape], dtype=tf.float32)), dtype=tf.int32)
-
     #anchors = box_list.BoxList(tf.placeholder(shape=(0, 4), dtype=tf.float32))
 
     #part_gen_field_anchors = partial(gen_field_anchors, anchors=anchors)
     field_anchors_list = shape_utils.static_or_dynamic_map_fn(
-      gen_field_anchors, elems=template_boxes, dtype=tf.float32, as_list=True)
-    boxlists = list(map(box_list.BoxList, field_anchors_list))
+      gen_field_anchors, elems=[template_boxes, template_corpora] , dtype=tf.float32, as_list=True)
+    boxlists = list(map(tensors_to_boxlists, field_anchors_list))
     anchors = box_list_ops.concatenate(boxlists)
     #anchors.set(tf.Print(anchors.get(), [anchors.num_boxes()], message=("Num of anchors ")))
     #box_list_ops.visualize_boxes_in_image(preprocessed_inputs[0], 
