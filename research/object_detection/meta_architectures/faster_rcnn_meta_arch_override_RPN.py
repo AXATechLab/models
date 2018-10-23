@@ -111,7 +111,7 @@ from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 import sys # for debug
-sys.path.append("/notebooks/text-renderer/")
+sys.path.append("/notebooks/text-renderer/generation/")
 import data_util
 
 slim = tf.contrib.slim

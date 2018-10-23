@@ -14,7 +14,11 @@ message DetectionModel {
     FasterRcnn faster_rcnn_rpn_blend = 4;
     Ssd ssd = 2;
   }
+
+}
+
+message TranscriptionModel {
   oneof transcription_model {
-  	CRNN crnn = 5;
+  	CRNN crnn = 1;
   }
 }

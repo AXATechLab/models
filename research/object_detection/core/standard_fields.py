@@ -101,6 +101,10 @@ class InputDataFields(object):
   multiclass_scores = 'multiclass_scores'
 
 
+class TranscriptionResultFields(object):
+  words = 'words'
+  score = 'score'
+
 class DetectionResultFields(object):
   """Naming conventions for storing the output of the detector.
 

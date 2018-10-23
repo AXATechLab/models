@@ -8,9 +8,9 @@ from src.model import deep_bidirectional_lstm, get_words_from_chars
 from src.config import  CONST
 from functools import partial
 
-class CRNN(object):
+class CRNN:
 
-    def __init__(self, parameters, detection_model, target_assigner):
+    def __init__(self, parameters, detection_model, target_assigner, is_training):
         self.parameters = parameters
         self.detection_model = detection_model
         self.target_assigner = target_assigner
@@ -62,7 +62,7 @@ class CRNN(object):
                 step_switch = tf.less(global_step, 1)
             else:
                 step_switch = tf.constant(False, dtype=tf.bool)
-            return tf.cond(step_switch, self.no_result(self.no_postprocessing), predict_fn)
+            return tf.cond(step_switch, self.no_result(self.no_postprocessing), predict_fn, name="StepSwitch")
 
 
 

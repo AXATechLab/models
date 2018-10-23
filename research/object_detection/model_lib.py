@@ -457,12 +457,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             variables_to_restore,
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
-      if two_stages:
-        total_loss = tf.Print(total_loss, [transcription_eval_op['eval/accuracy'], transcription_eval_op['eval/CER'], 
-          transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
+      # if two_stages:
+      #   total_loss = tf.Print(total_loss, 
+      #     [transcription_eval_op['eval/accuracy'], 
+      #     transcription_eval_op['eval/CER'], 
+      #     transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
       # Concat with transcription eval
-      # eval_metric_ops  = transcription_eval_op
+      eval_metric_ops  = transcription_eval_op
       # print(eval_metric_ops)
       # debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
       # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
@@ -571,6 +573,7 @@ def create_estimator_and_inputs(run_config,
   configs = merge_external_params_with_configs(
       configs, hparams, kwargs_dict=kwargs)
   model_config = configs['model']
+  transcription_config = configs['transcription_model']
   train_config = configs['train_config']
   train_input_config = configs['train_input_config']
   eval_config = configs['eval_config']
@@ -593,7 +596,7 @@ def create_estimator_and_inputs(run_config,
   detection_model_fn = functools.partial(
       model_builder.build, model_config=model_config)
   transcription_model_fn = functools.partial(
-      model_builder.build_transcription, model_config=model_config)
+      model_builder.build_transcription, model_config=transcription_config)
 
   # Create the input functions for TRAIN/EVAL/PREDICT.
   train_input_fn = create_train_input_fn(

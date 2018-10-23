@@ -154,14 +154,20 @@ def _add_output_tensor_nodes(postprocessed_tensors,
     A tensor dict containing the added output tensor nodes.
   """
   detection_fields = fields.DetectionResultFields
+  transcription_fields = fields.TranscriptionResultFields
   label_id_offset = 1
   boxes = postprocessed_tensors.get(detection_fields.detection_boxes)
   scores = postprocessed_tensors.get(detection_fields.detection_scores)
-  classes = postprocessed_tensors.get(
+  if detection_fields.detection_classes in postprocessed_tensors:
+    classes = postprocessed_tensors.get(
       detection_fields.detection_classes) + label_id_offset
+  else :
+    classes = tf.ones_like(scores)
   keypoints = postprocessed_tensors.get(detection_fields.detection_keypoints)
   masks = postprocessed_tensors.get(detection_fields.detection_masks)
   num_detections = postprocessed_tensors.get(detection_fields.num_detections)
+  transcriptions = postprocessed_tensors.get(transcription_fields.words)
+  transcription_score = postprocessed_tensors.get(transcription_fields.score)
   outputs = {}
   outputs[detection_fields.detection_boxes] = tf.identity(
       boxes, name=detection_fields.detection_boxes)
@@ -171,6 +177,10 @@ def _add_output_tensor_nodes(postprocessed_tensors,
       classes, name=detection_fields.detection_classes)
   outputs[detection_fields.num_detections] = tf.identity(
       num_detections, name=detection_fields.num_detections)
+  outputs[transcription_fields.words] = tf.identity(
+      transcriptions, name=transcription_fields.words)
+  outputs[transcription_fields.score] = tf.identity(
+      transcription_score, name=transcription_fields.score)
   if keypoints is not None:
     outputs[detection_fields.detection_keypoints] = tf.identity(
         keypoints, name=detection_fields.detection_keypoints)
@@ -186,7 +196,8 @@ def _add_output_tensor_nodes(postprocessed_tensors,
 def write_saved_model(saved_model_path,
                       frozen_graph_def,
                       inputs,
-                      outputs):
+                      outputs,
+                      is_two_stages=False):
   """Writes SavedModel to disk.
 
   If checkpoint_path is not None bakes the weights into the graph thereby
@@ -220,12 +231,18 @@ def write_saved_model(saved_model_path,
               outputs=tensor_info_outputs,
               method_name=signature_constants.PREDICT_METHOD_NAME))
 
+      # if is_two_stages:
+      #   main_op = tf.saved_model.main_op.main_op()
+      # else:
+      #   main_op = None
+
       builder.add_meta_graph_and_variables(
           sess, [tf.saved_model.tag_constants.SERVING],
           signature_def_map={
               signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
-                  detection_signature,
+                  detection_signature,  
           },
+          main_op=main_op
       )
       builder.save()
 
@@ -233,7 +250,8 @@ def write_saved_model(saved_model_path,
 def write_graph_and_checkpoint(inference_graph_def,
                                model_path,
                                input_saver_def,
-                               trained_checkpoint_prefix):
+                               trained_checkpoint_prefix,
+                               is_two_stages=False):
   """Writes the graph and the checkpoint into disk."""
   for node in inference_graph_def.node:
     node.device = ''
@@ -242,24 +260,31 @@ def write_graph_and_checkpoint(inference_graph_def,
     with session.Session() as sess:
       saver = saver_lib.Saver(saver_def=input_saver_def,
                               save_relative_paths=True)
+      # if is_two_stages:
+      #   table_init_op = tf.tables_initializer(name="init_all_tables")
+      #   sess.run(table_init_op)
       saver.restore(sess, trained_checkpoint_prefix)
       saver.save(sess, model_path)
 
 
 def _get_outputs_from_inputs(input_tensors, detection_model,
-                             output_collection_name):
+                             output_collection_name, transcription_model=None):
   inputs = tf.to_float(input_tensors)
   preprocessed_inputs, true_image_shapes = detection_model.preprocess(inputs)
   output_tensors = detection_model.predict(
       preprocessed_inputs, true_image_shapes)
-  postprocessed_tensors = detection_model.postprocess(
+  if transcription_model:
+    _, (postprocessed_tensors, _) = transcription_model.predict(output_tensors, true_image_shapes, 
+      tf.estimator.ModeKeys.PREDICT)
+  else :
+    postprocessed_tensors = detection_model.postprocess(
       output_tensors, true_image_shapes)
   return _add_output_tensor_nodes(postprocessed_tensors,
                                   output_collection_name)
 
 
 def _build_detection_graph(input_type, detection_model, input_shape,
-                           output_collection_name, graph_hook_fn):
+                           output_collection_name, graph_hook_fn, transcription_model=None):
   """Build the detection graph."""
   if input_type not in input_placeholder_fn_map:
     raise ValueError('Unknown input type: {}'.format(input_type))
@@ -274,7 +299,8 @@ def _build_detection_graph(input_type, detection_model, input_shape,
   outputs = _get_outputs_from_inputs(
       input_tensors=input_tensors,
       detection_model=detection_model,
-      output_collection_name=output_collection_name)
+      output_collection_name=output_collection_name,
+      transcription_model=transcription_model)
 
   # Add global step to the graph.
   slim.get_or_create_global_step()
@@ -293,7 +319,8 @@ def _export_inference_graph(input_type,
                             input_shape=None,
                             output_collection_name='inference_op',
                             graph_hook_fn=None,
-                            write_inference_graph=False):
+                            write_inference_graph=False,
+                            transcription_model=None):
   """Export helper."""
   tf.gfile.MakeDirs(output_directory)
   frozen_graph_path = os.path.join(output_directory,
@@ -306,7 +333,8 @@ def _export_inference_graph(input_type,
       detection_model=detection_model,
       input_shape=input_shape,
       output_collection_name=output_collection_name,
-      graph_hook_fn=graph_hook_fn)
+      graph_hook_fn=graph_hook_fn,
+      transcription_model=transcription_model)
 
   profile_inference_graph(tf.get_default_graph())
   saver_kwargs = {}
@@ -327,11 +355,13 @@ def _export_inference_graph(input_type,
   saver = tf.train.Saver(**saver_kwargs)
   input_saver_def = saver.as_saver_def()
 
+  two_stages = transcription_model != None
   write_graph_and_checkpoint(
       inference_graph_def=tf.get_default_graph().as_graph_def(),
       model_path=model_path,
       input_saver_def=input_saver_def,
-      trained_checkpoint_prefix=checkpoint_to_use)
+      trained_checkpoint_prefix=checkpoint_to_use,
+      is_two_stages=two_stages)
   if write_inference_graph:
     inference_graph_def = tf.get_default_graph().as_graph_def()
     inference_graph_path = os.path.join(output_directory,
@@ -346,6 +376,11 @@ def _export_inference_graph(input_type,
   else:
     output_node_names = ','.join(outputs.keys())
 
+  if two_stages:
+    init_nodes = 'init_all_tables'
+  else:
+    init_nodes = ''
+  print(init_nodes, "!!!!!!!!!!!!!!!!!!")
   frozen_graph_def = freeze_graph.freeze_graph_with_def_protos(
       input_graph_def=tf.get_default_graph().as_graph_def(),
       input_saver_def=input_saver_def,
@@ -355,10 +390,10 @@ def _export_inference_graph(input_type,
       filename_tensor_name='save/Const:0',
       output_graph=frozen_graph_path,
       clear_devices=True,
-      initializer_nodes='')
+      initializer_nodes=init_nodes)
 
   write_saved_model(saved_model_path, frozen_graph_def,
-                    placeholder_tensor, outputs)
+                    placeholder_tensor, outputs, is_two_stages=two_stages)
 
 
 def export_inference_graph(input_type,
@@ -387,6 +422,8 @@ def export_inference_graph(input_type,
   """
   detection_model = model_builder.build(pipeline_config.model,
                                         is_training=False)
+  transcription_model = model_builder.build_transcription(pipeline_config.transcription_model, 
+    detection_model, is_training=False)
   graph_rewriter_fn = None
   if pipeline_config.HasField('graph_rewriter'):
     graph_rewriter_config = pipeline_config.graph_rewriter
@@ -402,7 +439,8 @@ def export_inference_graph(input_type,
       input_shape,
       output_collection_name,
       graph_hook_fn=graph_rewriter_fn,
-      write_inference_graph=write_inference_graph)
+      write_inference_graph=write_inference_graph,
+      transcription_model=transcription_model)
   pipeline_config.eval_config.use_moving_averages = False
   config_util.save_pipeline_config(pipeline_config, output_directory)
 

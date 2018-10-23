@@ -123,7 +123,8 @@ def create_configs_from_pipeline_proto(pipeline_config):
     configs["eval_input_config"] = configs["eval_input_configs"][0]
   if pipeline_config.HasField("graph_rewriter"):
     configs["graph_rewriter_config"] = pipeline_config.graph_rewriter
-
+  if pipeline_config.HasField("transcription_model"):
+    configs["transcription_model"] = pipeline_config.transcription_model
   return configs
 
 
