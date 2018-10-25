@@ -224,7 +224,6 @@ class CRNN:
         # Loss
         # ----
         # >>> Cannot have longer labels than predictions -> error
-        batch_size = predictions_dict['prob'].shape[1]
         with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
             loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
                                       inputs=predictions_dict['prob'],
@@ -239,6 +238,24 @@ class CRNN:
 
 
     def compute_eval_ops(self, predictions_dict, matched_transcriptions, sampled_indices, gt_transcriptions):
+        """
+            Compute Precision, Recall and Character Error Rate (CER). 
+
+            All metrics are backed by tf.accuracy. We devise matchings to compute the metrics.
+            Matches in tf.accuracy always equal the amount of 
+            true positives. False positives and negatives are computed as below.
+
+            For precision, we use the postprocessed transcriptions from the model and their assigned groundtruth
+            texts. Unassigned predictions are mapped to the single code "-1", so that they will always
+            be unmatched under tf.accuracy. In this
+            case the count of unmatched entities in tf.accuracy equals the amount of false positives.
+
+            For recall, we use the perfect matching between groundtruth and predictions. Then, we pad it with 
+            unmatched string pairs until the size equals the amount of groundtruth objects. 
+            This way, the number of unmatched rows under tf.accuracy equals the number of false negatives.
+
+            For CER, we simply encode in sparse format the perfect matching.
+        """
         with tf.name_scope('evaluation'):
             def encode_groundtruth(matched_transcriptions):
                 matched_codes = self.str2code(matched_transcriptions)
