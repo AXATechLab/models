@@ -148,6 +148,7 @@ class BoxListFields(object):
   """
   boxes = 'boxes'
   classes = 'classes'
+  groundtruth_transcription = 'groundtruth_transcription'
   transcription = 'transcription'
   corpus = 'corpus'
   scores = 'scores'

@@ -210,7 +210,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         configurations.
     """
     params = params or {}
-    total_loss, train_op, final_response, export_outputs = None, None, None, None
+    total_loss, train_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, {}
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
@@ -282,7 +282,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           features[fields.InputDataFields.true_image_shape])
       if two_stages:
         print("Running E2E architecture")
-        transcription_loss, (transcription_dict, transcription_eval_op) = transcription_model.predict(prediction_dict,
+        transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       if two_stages:
@@ -464,7 +464,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       #     transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
       # Concat with transcription eval
-      eval_metric_ops  = transcription_eval_op
+      eval_metric_ops.update(transcription_eval_ops)
       # print(eval_metric_ops)
       # debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
       # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
