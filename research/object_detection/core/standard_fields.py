@@ -124,6 +124,7 @@ class DetectionResultFields(object):
   key = 'key'
   detection_boxes = 'detection_boxes'
   detection_scores = 'detection_scores'
+  detection_corpora = 'detection_corpora'
   detection_classes = 'detection_classes'
   detection_masks = 'detection_masks'
   detection_boundaries = 'detection_boundaries'

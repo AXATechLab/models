@@ -34,6 +34,7 @@ class CRNN:
         self.no_postprocessing = {
             'detection_boxes' : tf.constant(0, dtype=tf.float32),
             'detection_scores' : tf.constant(0, dtype=tf.float32),
+            'detection_corpora' : tf.constant(0, dtype=tf.int32),
             'num_detections' : tf.constant(0, dtype=tf.float32)
         }
 
@@ -48,7 +49,7 @@ class CRNN:
             'seq_len_inputs': 0,
             'prob': tf.constant([[0], [0]], dtype=tf.float32),
             'score': tf.constant(0, dtype=tf.float32),
-            'words': tf.constant('?', dtype=tf.string)
+            'words': tf.constant('', dtype=tf.string)
         }
         transcriptions_dict.update(detections_dict)
         return [self.zero_loss, transcriptions_dict]
@@ -77,14 +78,16 @@ class CRNN:
             prediction_dict['class_predictions_with_background'],
             prediction_dict['proposal_boxes'],
             prediction_dict['num_proposals'],
+            prediction_dict['proposal_corpora'],
             true_image_shapes)
         detection_boxes = detections_dict[
           fields.DetectionResultFields.detection_boxes][0]
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0]
+        detection_corpora = detections_dict[
+            fields.DetectionResultFields.detection_corpora][0]
         matched_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop('detection_classes')
-
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections][0], tf.int32)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
@@ -111,6 +114,7 @@ class CRNN:
             matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], NULL, NULL)
             # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the matched GTs transcr.", summarize=99999)
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, matched_transcriptions)
+            detection_boxlist.add_field(fields.BoxListFields.corpus, detection_corpora)
 
 
             positive_indicator = match.matched_column_indicator()
@@ -138,20 +142,19 @@ class CRNN:
                 sampled_padded_boxlist = normalized_sampled_boxlist
                 detection_boxes = sampled_padded_boxlist.get()
                 matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-                # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the subsampled GTs transcr.", summarize=99999)
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
-                # tf.minimum(sampled_boxlist.num_boxes(), self.batch_size)
+                detection_corpora = sampled_padded_boxlist.get_field(fields.BoxListFields.corpus)
                 num_detections = sampled_boxlist.num_boxes()           
                 sparse_code_target = self.str2code(matched_transcriptions)
 
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, detection_boxes, matched_transcriptions, 
-                        detection_scores, num_detections, mode)
+                        detection_scores, detection_corpora, num_detections, mode)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, detection_boxes, matched_transcriptions, 
-                        detection_scores, num_detections, mode)
+                        detection_scores, detection_corpora, num_detections, mode)
                 return [self.zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -167,14 +170,15 @@ class CRNN:
 
 
         predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, detection_boxes, 
-                matched_transcriptions, detection_scores, num_detections, mode), self.no_eval_op]
+                matched_transcriptions, detection_scores, detection_corpora, num_detections, mode),
+                self.no_eval_op]
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn, 
             self.no_result_fn(detections_dict), name=BATCH_COND)
 
 
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions, 
-        detection_scores, num_detections, mode, sparse_code_target=None):
+        detection_scores, detection_corpora, num_detections, mode, sparse_code_target=None):
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
         flattened_detected_feature_maps = (
@@ -189,16 +193,18 @@ class CRNN:
                                       name='transposed')  # [batch, width, height, features]
             conv_reshaped = tf.reshape(transposed, [-1, shape[2], shape[1] * shape[3]],
                                        name='reshaped')  # [batch, width, height x features]
-        placeholder_features = {
-            'corpus' : tf.zeros_like(detection_scores, dtype=tf.int32),
+        detection_corpora = tf.Print(detection_corpora, [detection_corpora], message="corpora", summarize=100000)
+        additional_fields = {
+            'corpus' : detection_corpora,
             'image_width': shape[2],
         }
-        transcription_dict = self.lstm_layers(conv_reshaped, placeholder_features, mode, sparse_code_target)
+        transcription_dict = self.lstm_layers(conv_reshaped, additional_fields, mode, sparse_code_target)
         transcription_dict['labels'] = matched_transcriptions
         # transcription_dict['label_codes'] = sparse_code_target
         detections_dict = {}
         detections_dict['detection_boxes'] = detection_boxes
         detections_dict['detection_scores'] = detection_scores
+        detections_dict['detection_corpora'] = detection_corpora
         detections_dict['num_detections'] = tf.cast(num_detections, dtype=tf.float32)
         for k,v in detections_dict.items():
             detections_dict[k] = tf.expand_dims(v, axis=0)
@@ -242,16 +248,16 @@ class CRNN:
             Compute Precision, Recall and Character Error Rate (CER). 
 
             All metrics are backed by tf.accuracy. We devise matchings to compute the metrics.
-            Matches in tf.accuracy always equal the amount of 
-            true positives. False positives and negatives are computed as below.
+            Matches in tf.accuracy always equal the amount of true positives. False positives and negatives 
+            are computed as below.
 
             For precision, we use the postprocessed transcriptions from the model and their assigned groundtruth
             texts. Unassigned predictions are mapped to the single code "-1", so that they will always
-            be unmatched under tf.accuracy. In this
-            case the count of unmatched entities in tf.accuracy equals the amount of false positives.
+            be unmatched under tf.accuracy. In this case the count of unmatched rows in tf.accuracy 
+            equals the amount of false positives.
 
-            For recall, we use the perfect matching between groundtruth and predictions. Then, we pad it with 
-            unmatched string pairs until the size equals the amount of groundtruth objects. 
+            For recall, we start from the perfect matching between groundtruth and predictions. Then, we pad
+            it with unmatched string pairs such that the size equals the amount of groundtruth objects. 
             This way, the number of unmatched rows under tf.accuracy equals the number of false negatives.
 
             For CER, we simply encode in sparse format the perfect matching.

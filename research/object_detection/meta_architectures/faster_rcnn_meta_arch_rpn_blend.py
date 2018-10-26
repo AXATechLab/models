@@ -692,7 +692,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           rpn_box_encodings,
           rpn_objectness_predictions_with_background,
           rpn_features_to_crop,
-          self._anchors.get(), image_shape, true_image_shapes))
+          self._anchors.get(), self._anchors.get_field(fields.BoxListFields.corpus),
+          image_shape, true_image_shapes))
 
     if self._number_of_stages == 3:
       prediction_dict = self._predict_third_stage(
@@ -722,6 +723,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                             rpn_objectness_predictions_with_background,
                             rpn_features_to_crop,
                             anchors,
+                            corpora,
                             image_shape,
                             true_image_shapes):
     """Predicts the output tensors from second stage of Faster R-CNN.
@@ -777,9 +779,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           features for each proposal.
     """
     image_shape_2d = self._image_batch_shape_2d(image_shape)
-    proposal_boxes_normalized, _, num_proposals = self._postprocess_rpn(
+    proposal_boxes_normalized, _, proposal_corpora, num_proposals = self._postprocess_rpn(
         rpn_box_encodings, rpn_objectness_predictions_with_background,
-        anchors, image_shape_2d, true_image_shapes)
+        anchors, image_shape_2d, true_image_shapes, corpora=corpora)
 
     flattened_proposal_feature_maps = (
         self._compute_second_stage_input_feature_maps(
@@ -819,6 +821,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         'proposal_boxes': absolute_proposal_boxes,
         'box_classifier_features': box_classifier_features,
         'proposal_boxes_normalized': proposal_boxes_normalized,
+        'proposal_corpora': proposal_corpora
     }
 
     return prediction_dict
@@ -1012,7 +1015,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       return anchors
 
     template_boxes = tf.expand_dims(tf.constant(self.template_proposals, dtype=tf.float32), axis=0)
-    template_corpora = tf.constant(self.template_corpora, dtype=tf.int32)
+    template_corpora = tf.constant(self.template_corpora, dtype=tf.float32)
 
     #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer
@@ -1196,7 +1199,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
 
     with tf.name_scope('FirstStagePostprocessor'):
       if self._number_of_stages == 1:
-        proposal_boxes, proposal_scores, num_proposals = self._postprocess_rpn(
+        proposal_boxes, proposal_scores, _, num_proposals = self._postprocess_rpn(
             prediction_dict['rpn_box_encodings'],
             prediction_dict['rpn_objectness_predictions_with_background'],
             prediction_dict['anchors'],
@@ -1239,7 +1242,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                        rpn_objectness_predictions_with_background_batch,
                        anchors,
                        image_shapes,
-                       true_image_shapes):
+                       true_image_shapes,
+                       corpora=None):
     """Converts first stage prediction tensors from the RPN to proposals.
 
     This function decodes the raw RPN predictions, runs non-max suppression
@@ -1285,13 +1289,19 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         rpn_box_encodings_batch)
     tiled_anchor_boxes = tf.tile(
         tf.expand_dims(anchors, 0), [rpn_encodings_shape[0], 1, 1])
+    if corpora is not None:
+      tiled_anchor_corpora = tf.tile(
+        tf.expand_dims(corpora, 0), [rpn_encodings_shape[0], 1])
+      additional_fields = {fields.BoxListFields.corpus : tiled_anchor_corpora}
+    else:
+      additional_fields = None
     proposal_boxes = self._batch_decode_boxes(rpn_box_encodings_batch,
                                               tiled_anchor_boxes)
     proposal_boxes = tf.squeeze(proposal_boxes, axis=2)
     rpn_objectness_softmax_without_background = tf.nn.softmax(
         rpn_objectness_predictions_with_background_batch)[:, :, 1]
     clip_window = self._compute_clip_window(image_shapes)
-    (proposal_boxes, proposal_scores, _, _, _,
+    (proposal_boxes, proposal_scores, _, _, additional_fields,
      num_proposals) = post_processing.batch_multiclass_non_max_suppression(
          tf.expand_dims(proposal_boxes, axis=2),
          tf.expand_dims(rpn_objectness_softmax_without_background,
@@ -1300,16 +1310,21 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
          self._first_stage_nms_iou_threshold,
          self._first_stage_max_proposals,
          self._first_stage_max_proposals,
-         clip_window=clip_window)
+         clip_window=clip_window,
+         additional_fields=additional_fields)
+    if additional_fields is not None:
+      proposal_corpora = additional_fields[fields.BoxListFields.corpus]
+    else:
+      proposal_corpora = None
     if self._is_training:
       proposal_boxes = tf.stop_gradient(proposal_boxes)
       if not self._hard_example_miner:
         (groundtruth_boxlists, groundtruth_classes_with_background_list, _,
          groundtruth_weights_list
         ) = self._format_groundtruth_data(true_image_shapes)
-        (proposal_boxes, proposal_scores,
+        (proposal_boxes, proposal_scores, proposal_corpora,
          num_proposals) = self._sample_box_classifier_batch(
-             proposal_boxes, proposal_scores, num_proposals,
+             proposal_boxes, proposal_scores, proposal_corpora, num_proposals,
              groundtruth_boxlists, groundtruth_classes_with_background_list,
              groundtruth_weights_list)
     # normalize proposal boxes
@@ -1322,12 +1337,13 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       return normalized_boxes_per_image
     normalized_proposal_boxes = shape_utils.static_or_dynamic_map_fn(
         normalize_boxes, elems=[proposal_boxes, image_shapes], dtype=tf.float32)
-    return normalized_proposal_boxes, proposal_scores, num_proposals
+    return normalized_proposal_boxes, proposal_scores, proposal_corpora, num_proposals
 
   def _sample_box_classifier_batch(
       self,
       proposal_boxes,
       proposal_scores,
+      proposal_corpora,
       num_proposals,
       groundtruth_boxlists,
       groundtruth_classes_with_background_list,
@@ -1367,15 +1383,18 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     """
     single_image_proposal_box_sample = []
     single_image_proposal_score_sample = []
+    single_image_proposal_corpora_sample = []
     single_image_num_proposals_sample = []
     for (single_image_proposal_boxes,
          single_image_proposal_scores,
+         single_image_proposal_corpora,
          single_image_num_proposals,
          single_image_groundtruth_boxlist,
          single_image_groundtruth_classes_with_background,
          single_image_groundtruth_weights) in zip(
              tf.unstack(proposal_boxes),
              tf.unstack(proposal_scores),
+             tf.unstack(proposal_corpora),
              tf.unstack(num_proposals),
              groundtruth_boxlists,
              groundtruth_classes_with_background_list,
@@ -1383,6 +1402,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       single_image_boxlist = box_list.BoxList(single_image_proposal_boxes)
       single_image_boxlist.add_field(fields.BoxListFields.scores,
                                      single_image_proposal_scores)
+      single_image_boxlist.add_field(fields.BoxListFields.corpus,
+                                     single_image_proposal_corpora)
       sampled_boxlist = self._sample_box_classifier_minibatch_single_image(
           single_image_boxlist,
           single_image_num_proposals,
@@ -1399,8 +1420,11 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       single_image_proposal_box_sample.append(bb)
       single_image_proposal_score_sample.append(
           sampled_padded_boxlist.get_field(fields.BoxListFields.scores))
+      single_image_proposal_corpora_sample.append(
+          sampled_padded_boxlist.get_field(fields.BoxListFields.corpus))
     return (tf.stack(single_image_proposal_box_sample),
             tf.stack(single_image_proposal_score_sample),
+            tf.stack(single_image_proposal_corpora_sample),
             tf.stack(single_image_num_proposals_sample))
 
   def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
@@ -1567,7 +1591,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
               parallel_iterations=self._parallel_iterations))
     else:
       if stage == 'transcription':
-        crop_size = (self._initial_crop_size, 63)
+        crop_size = (2, 63)
       else:
         crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(
@@ -1575,6 +1599,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           self._flatten_first_two_dimensions(proposal_boxes_normalized),
           get_box_inds(proposal_boxes_normalized),
           crop_size)
+      if stage == 'transcription':
+        return cropped_regions
     return slim.max_pool2d(
         cropped_regions,
         [self._maxpool_kernel_size, self._maxpool_kernel_size],
@@ -1585,6 +1611,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                                   class_predictions_with_background,
                                   proposal_boxes,
                                   num_proposals,
+                                  proposal_corpora,
                                   image_shapes,
                                   mask_predictions=None):
     """Converts predictions from the second stage box classifier to detections.
@@ -1649,17 +1676,21 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       mask_predictions_batch = tf.reshape(
           mask_predictions, [-1, self.max_num_proposals,
                              self.num_classes, mask_height, mask_width])
-    (nmsed_boxes, nmsed_scores, nmsed_classes, nmsed_masks, _,
+    additional_fields = {fields.BoxListFields.corpus : proposal_corpora}
+    (nmsed_boxes, nmsed_scores, nmsed_classes, nmsed_masks, additional_fields,
      num_detections) = self._second_stage_nms_fn(
          refined_decoded_boxes_batch,
          class_predictions_batch,
          clip_window=clip_window,
+         additional_fields=additional_fields,
          change_coordinate_frame=True,
          num_valid_boxes=num_proposals,
          masks=mask_predictions_batch)
+    nmsed_corpora = tf.cast(additional_fields[fields.BoxListFields.corpus], dtype=tf.int32)
     detections = {
         fields.DetectionResultFields.detection_boxes: nmsed_boxes,
         fields.DetectionResultFields.detection_scores: nmsed_scores,
+        fields.DetectionResultFields.detection_corpora: nmsed_corpora,
         fields.DetectionResultFields.detection_classes: nmsed_classes,
         fields.DetectionResultFields.num_detections: tf.to_float(num_detections)
     }
