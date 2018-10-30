@@ -39,7 +39,7 @@ EVAL_METRICS_CLASS_DICT = {
         coco_evaluation.CocoDetectionEvaluator,
     'coco_mask_metrics':
         coco_evaluation.CocoMaskEvaluator,
-    'transcription_metrics': 
+    'transcription_metrics':
         transcription_evaluation.TranscriptionEvaluator
 }
 
@@ -79,6 +79,7 @@ def visualize_detection_results(result_dict,
                                 max_num_predictions=20,
                                 skip_scores=False,
                                 skip_labels=False,
+                                transcriptions=None,
                                 keep_image_id_for_visualization_export=False):
   """Visualizes detection results and writes visualizations to image summaries.
 
@@ -163,8 +164,9 @@ def visualize_detection_results(result_dict,
     vis_utils.visualize_boxes_and_labels_on_image_array(
         image=image,
         boxes=groundtruth_boxes,
-        classes=None,
         scores=None,
+        classes=None,
+        transcriptions=transcriptions,
         category_index=category_index,
         keypoints=groundtruth_keypoints,
         use_normalized_coordinates=False,
@@ -176,6 +178,7 @@ def visualize_detection_results(result_dict,
       detection_classes,
       detection_scores,
       category_index,
+      transcriptions=transcriptions,
       instance_masks=detection_masks,
       instance_boundaries=detection_boundaries,
       keypoints=detection_keypoints,
@@ -619,10 +622,9 @@ def result_dict_for_single_example(image,
       output_dict[input_data_fields.groundtruth_classes] = groundtruth_classes
 
     # Handle transcription stage
-    # if 'words' in detections:
-    #   output_dict['transcription_prob'] = detections['prob']
-    #   output_dict['transcription_words'] = detections['words']
-    #   output_dict['transcription_raw'] = detections['raw_predictions']
+    if 'words' in detections:
+      output_dict['prob'] = detections['prob']
+      output_dict['words'] = detections['words']
   return output_dict
 
 

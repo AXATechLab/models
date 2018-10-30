@@ -269,12 +269,13 @@ def draw_bounding_boxes_on_image(image,
 
 
 
-def _visualize_boxes(image, boxes, classes, scores, category_index, **kwargs):
+def _visualize_boxes(image, boxes, classes, scores, transcriptions, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
-      image, boxes, classes, scores, category_index=category_index, **kwargs)
+      image, boxes, classes, scores, category_index=category_index,
+      transcriptions=transcriptions, **kwargs)
 
 
-def _visualize_boxes_and_masks(image, boxes, classes, scores, masks,
+def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcriptions,
                                category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -283,10 +284,11 @@ def _visualize_boxes_and_masks(image, boxes, classes, scores, masks,
       scores,
       category_index=category_index,
       instance_masks=masks,
+      transcriptions=transcriptions,
       **kwargs)
 
 
-def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints,
+def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, transcriptions,
                                    category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -295,11 +297,12 @@ def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints,
       scores,
       category_index=category_index,
       keypoints=keypoints,
+      transcriptions=transcriptions,
       **kwargs)
 
 
 def _visualize_boxes_and_masks_and_keypoints(
-    image, boxes, classes, scores, masks, keypoints, category_index, **kwargs):
+    image, boxes, classes, scores, masks, keypoints, transcriptions, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
@@ -308,6 +311,7 @@ def _visualize_boxes_and_masks_and_keypoints(
       category_index=category_index,
       instance_masks=masks,
       keypoints=keypoints,
+      transcriptions=transcriptions,
       **kwargs)
 
 
@@ -316,6 +320,7 @@ def draw_bounding_boxes_on_image_tensors(images,
                                          classes,
                                          scores,
                                          category_index,
+                                         transcriptions=None,
                                          instance_masks=None,
                                          keypoints=None,
                                          max_boxes_to_draw=20,
@@ -352,7 +357,7 @@ def draw_bounding_boxes_on_image_tensors(images,
       'max_boxes_to_draw': max_boxes_to_draw,
       'min_score_thresh': min_score_thresh,
       'agnostic_mode': False,
-      'line_thickness': 4
+      'line_thickness': 4,
   }
 
   if instance_masks is not None and keypoints is None:
@@ -379,6 +384,11 @@ def draw_bounding_boxes_on_image_tensors(images,
         category_index=category_index,
         **visualization_keyword_args)
     elems = [images, boxes, classes, scores]
+
+  if transcriptions is not None:
+    elems.append(transcriptions)
+  else:
+    elems.append(tf.fill(tf.shape(boxes)[0:2], 'N/A'))
 
   def draw_boxes(image_and_detections):
     """Draws boxes on image."""
@@ -413,7 +423,6 @@ def draw_side_by_side_evaluation_image(eval_dict,
     A [1, H, 2 * W, C] uint8 tensor. The subimage on the left corresponds to
       detections, while the subimage on the right corresponds to groundtruth.
   """
-  print("start of draw")
   detection_fields = fields.DetectionResultFields()
   input_data_fields = fields.InputDataFields()
   instance_masks = None
@@ -432,12 +441,18 @@ def draw_side_by_side_evaluation_image(eval_dict,
             eval_dict[input_data_fields.groundtruth_instance_masks], axis=0),
         tf.uint8)
 
+  if 'words' in eval_dict:
+    transcriptions = tf.expand_dims(eval_dict['words'], axis=0)
+  else:
+    transcriptions = None
+
   images_with_detections = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
       tf.expand_dims(eval_dict[detection_fields.detection_boxes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_classes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
       category_index,
+      transcriptions=transcriptions,
       instance_masks=instance_masks,
       keypoints=keypoints,
       max_boxes_to_draw=max_boxes_to_draw,
@@ -549,6 +564,7 @@ def visualize_boxes_and_labels_on_image_array(
     classes,
     scores,
     category_index,
+    transcriptions=None,
     instance_masks=None,
     instance_boundaries=None,
     keypoints=None,
@@ -623,7 +639,9 @@ def visualize_boxes_and_labels_on_image_array(
       else:
         display_str = ''
         if not skip_labels:
-          if not agnostic_mode:
+          if transcriptions is not None:
+            class_name = transcriptions[i]
+          elif not agnostic_mode:
             if classes[i] in category_index.keys():
               class_name = category_index[classes[i]]['name']
             else:

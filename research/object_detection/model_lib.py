@@ -414,7 +414,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         eval_images = features[fields.InputDataFields.image]
       eval_dict = eval_util.result_dict_for_single_example(
           eval_images[0:1],
-          #eval_images[img_i:(img_i+1)],
           features[inputs.HASH_KEY][0],
           final_response,
           groundtruth,
@@ -427,15 +426,18 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         category_index = label_map_util.create_category_index_from_labelmap(
             eval_input_config.label_map_path)
       vis_metric_ops = None
-      # if not use_tpu and use_original_images:
-      #   eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
-      #       category_index,
-      #       max_examples_to_draw=eval_config.num_visualizations,
-      #       max_boxes_to_draw=eval_config.max_num_boxes_to_visualize,
-      #       min_score_thresh=eval_config.min_score_threshold,
-      #       use_normalized_coordinates=False)
-      #   vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
-      #       eval_dict)
+      if not use_tpu and use_original_images:
+        eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
+            category_index,
+            max_examples_to_draw=eval_config.num_visualizations,
+            max_boxes_to_draw=eval_config.max_num_boxes_to_visualize,
+            min_score_thresh=eval_config.min_score_threshold,
+            use_normalized_coordinates=False)
+        vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
+            eval_dict)
+
+      # tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
+
 
       # Eval metrics on a single example.
       eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
@@ -458,9 +460,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
       # if two_stages:
-      #   total_loss = tf.Print(total_loss, 
-      #     [transcription_eval_op['eval/accuracy'], 
-      #     transcription_eval_op['eval/CER'], 
+      #   total_loss = tf.Print(total_loss,
+      #     [transcription_eval_op['eval/accuracy'],
+      #     transcription_eval_op['eval/CER'],
       #     transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
       # Concat with transcription eval
@@ -622,7 +624,7 @@ def create_estimator_and_inputs(run_config,
   export_to_tpu = hparams.get('export_to_tpu', False)
   tf.logging.info('create_estimator_and_inputs: use_tpu %s, export_to_tpu %s',
                   use_tpu, export_to_tpu)
-  model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu, 
+  model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu,
     transcription_model_fn=transcription_model_fn)
   if use_tpu_estimator:
     estimator = tf.contrib.tpu.TPUEstimator(
