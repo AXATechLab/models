@@ -624,7 +624,9 @@ def result_dict_for_single_example(image,
     # Handle transcription stage
     if 'words' in detections:
       output_dict['prob'] = detections['prob']
-      output_dict['words'] = detections['words']
+      output_dict['words'] = detections['words'][0]
+      if groundtruth:
+        output_dict[input_data_fields.groundtruth_transcription] = groundtruth[input_data_fields.groundtruth_transcription]
   return output_dict
 
 

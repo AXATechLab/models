@@ -305,7 +305,7 @@ class CRNN:
             precision = tf.Print(precision, [precision], message="Precision -- ")
             recall = tf.Print(recall, [recall], message="Recall -- ")
             CER = tf.Print(CER, [CER], message="CER -- ")
-            CER_op = tf.Print(CER_op, [predictions_dict['words']], summarize=100)
+            CER_op = tf.Print(CER_op, [predictions_dict['words'][0]], summarize=100)
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
                 'eval/recall' : (recall, recall_op),

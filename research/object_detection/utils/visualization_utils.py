@@ -440,11 +440,11 @@ def draw_side_by_side_evaluation_image(eval_dict,
         tf.expand_dims(
             eval_dict[input_data_fields.groundtruth_instance_masks], axis=0),
         tf.uint8)
-
+  transcriptions = None
   if 'words' in eval_dict:
     transcriptions = tf.expand_dims(eval_dict['words'], axis=0)
-  else:
-    transcriptions = None
+    groundtruth_transcriptions = tf.expand_dims(eval_dict[
+      input_data_fields.groundtruth_transcription], axis=0)
 
   images_with_detections = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
@@ -468,6 +468,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
               dtype=tf.float32),
           axis=0),
       category_index,
+      transcriptions= groundtruth_transcriptions,
       instance_masks=groundtruth_instance_masks,
       keypoints=None,
       max_boxes_to_draw=None,
@@ -641,6 +642,7 @@ def visualize_boxes_and_labels_on_image_array(
         if not skip_labels:
           if transcriptions is not None:
             class_name = transcriptions[i]
+            display_str = str(class_name.decode('latin1'))
           elif not agnostic_mode:
             if classes[i] in category_index.keys():
               class_name = category_index[classes[i]]['name']
