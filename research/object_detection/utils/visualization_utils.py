@@ -865,6 +865,7 @@ class EvalMetricOpsVisualization(object):
         get_images, [], [tf.uint8] * self._max_examples_to_draw)
     eval_metric_ops = {}
     for i, image in enumerate(image_tensors):
+      # image = tf.Print(image, [tf.size(tf.shape(image))], summarize=1000)
       summary_name = self._summary_name_prefix + '/' + str(i)
       value_op = image_summary_or_default_string(summary_name, image)
       eval_metric_ops[summary_name] = (value_op, update_op)
@@ -885,6 +886,10 @@ class EvalMetricOpsVisualization(object):
     """
     raise NotImplementedError
 
+class DebugCrops(EvalMetricOpsVisualization):
+  def images_from_evaluation_dict(self, eval_dict):
+    return tf.split(eval_dict['debug_crops'], axis=0,
+      num_or_size_splits=tf.ones(150, dtype=tf.int32))
 
 class VisualizeSingleFrameDetections(EvalMetricOpsVisualization):
   """Class responsible for single-frame object detection visualizations."""

@@ -45,6 +45,7 @@ class CRNN:
         transcriptions_dict = {
             'raw_predictions': tf.constant(0, dtype=tf.int64),
             'labels': tf.constant('', dtype=tf.string),
+            'debug_crops': tf.constant([[0], [0]], dtype=tf.uint8),
             'seq_len_inputs': 0,
             'prob': tf.constant([[0], [0]], dtype=tf.float32),
             'score': tf.constant(0, dtype=tf.float32),
@@ -55,10 +56,10 @@ class CRNN:
 
     # This is in the same fashion as predict_third_stage's inference
     # TODO: use parameters instead of copying FasterRCNN's
-    def predict(self, prediction_dict, true_image_shapes, mode):
+    def predict(self, prediction_dict, true_image_shapes, mode, debug_image=None):
         with tf.variable_scope('crnn'):
             predict_fn = partial(self._predict, mode=mode, prediction_dict=prediction_dict,
-                true_image_shapes=true_image_shapes)
+                true_image_shapes=true_image_shapes, debug_image=debug_image)
             if mode == tf.estimator.ModeKeys.TRAIN:
                 global_step = tf.train.get_or_create_global_step()
                 disabled = tf.less(global_step, -1)
@@ -69,7 +70,7 @@ class CRNN:
 
 
 
-    def _predict(self, prediction_dict, true_image_shapes, mode):
+    def _predict(self, prediction_dict, true_image_shapes, mode, debug_image):
         # Postprocess FasterRCNN stage 2
         detection_model = self.detection_model
         detections_dict = detection_model._postprocess_box_classifier(
@@ -153,13 +154,13 @@ class CRNN:
                 sparse_code_target = self.str2code(matched_transcriptions)
 
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
-                        detection_scores, detection_corpora, num_detections, mode)
+                        detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                    padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode)
+                    padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image)
                 return [self.zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -175,7 +176,7 @@ class CRNN:
 
 
         predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode),
+                padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image),
                 self.no_eval_op]
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
             self.no_result_fn(detections_dict), name=BATCH_COND)
@@ -183,15 +184,15 @@ class CRNN:
 
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
-        detection_scores, detection_corpora, num_detections, mode):
+        detection_scores, detection_corpora, num_detections, mode, debug_image):
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
         detection_boxes = tf.stop_gradient(detection_boxes)
         rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
-        flattened_detected_feature_maps = (
-              detection_model._compute_second_stage_input_feature_maps(
-                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription'))
-
+        flattened_detected_feature_maps, debug_crops = detection_model._compute_second_stage_input_feature_maps(
+                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
+                  debug_image=debug_image)
+        flattened_detected_feature_maps = (flattened_detected_feature_maps)
 
         with tf.variable_scope('Reshaping_cnn'):
             shape = flattened_detected_feature_maps.get_shape().as_list()  # [batch, height, width, features]
@@ -207,6 +208,7 @@ class CRNN:
         }
         transcription_dict = self.lstm_layers(conv_reshaped, additional_fields, mode)
         transcription_dict['labels'] = matched_transcriptions
+        transcription_dict['debug_crops'] = debug_crops
         # transcription_dict['label_codes'] = sparse_code_target
         detections_dict = {}
         detections_dict['detection_boxes'] = detection_boxes

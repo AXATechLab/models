@@ -1549,7 +1549,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     return box_list_ops.boolean_mask(proposal_boxlist, sampled_indices)
 
   def _compute_second_stage_input_feature_maps(self, features_to_crop,
-                                               proposal_boxes_normalized, stage='detection'):
+                                               proposal_boxes_normalized, stage='detection', debug_image=None):
     """Crops to a set of proposals from the feature map for a batch of images.
 
     Helper function for self._postprocess_rpn. This function calls
@@ -1592,6 +1592,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     else:
       if stage == 'transcription':
         crop_size = (1, 48)
+        crop_size_debug = (7, 768)
       else:
         crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(
@@ -1600,7 +1601,14 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           get_box_inds(proposal_boxes_normalized),
           crop_size)
       if stage == 'transcription':
-        return cropped_regions
+        cropped_regions_debug = tf.constant(0, dtype=tf.uint8)
+        if not self._is_training:
+          cropped_regions_debug = tf.cast(tf.image.crop_and_resize(
+          debug_image,
+          self._flatten_first_two_dimensions(proposal_boxes_normalized),
+          get_box_inds(proposal_boxes_normalized),
+          crop_size_debug), dtype=tf.uint8)
+        return cropped_regions, cropped_regions_debug
     return slim.max_pool2d(
         cropped_regions,
         [self._maxpool_kernel_size, self._maxpool_kernel_size],

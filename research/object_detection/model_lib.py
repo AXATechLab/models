@@ -283,7 +283,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       if two_stages:
         print("Running E2E architecture")
         transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
-            features[fields.InputDataFields.true_image_shape], mode)
+            features[fields.InputDataFields.true_image_shape], mode, debug_image=preprocessed_images)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       if two_stages:
         final_response = transcription_dict
@@ -435,6 +435,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             use_normalized_coordinates=False)
         vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
             eval_dict)
+        debug_eval_metric_op_vis = vis_utils.DebugCrops(
+            category_index,
+            max_examples_to_draw=eval_config.num_visualizations,
+            max_boxes_to_draw=eval_config.max_num_boxes_to_visualize,
+            min_score_thresh=eval_config.min_score_threshold,
+            use_normalized_coordinates=False)
+        debug_metric_ops = debug_eval_metric_op_vis.get_estimator_eval_metric_ops(
+            transcription_dict)
 
       # tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
 
@@ -448,6 +456,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         eval_metric_ops[var.op.name] = (var, tf.no_op())
       if vis_metric_ops is not None:
         eval_metric_ops.update(vis_metric_ops)
+        eval_metric_ops.update(debug_metric_ops)
       eval_metric_ops = {str(k): v for k, v in eval_metric_ops.items()}
 
       if eval_config.use_moving_averages:
