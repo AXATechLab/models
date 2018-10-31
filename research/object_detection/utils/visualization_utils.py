@@ -641,8 +641,7 @@ def visualize_boxes_and_labels_on_image_array(
         display_str = ''
         if not skip_labels:
           if transcriptions is not None:
-            class_name = transcriptions[i]
-            display_str = str(class_name.decode('latin1'))
+            display_str = str(i) + " " + str(transcriptions[i].decode('latin1'))
           elif not agnostic_mode:
             if classes[i] in category_index.keys():
               class_name = category_index[classes[i]]['name']
@@ -887,6 +886,21 @@ class EvalMetricOpsVisualization(object):
     raise NotImplementedError
 
 class DebugCrops(EvalMetricOpsVisualization):
+  def __init__(self,
+               category_index,
+               max_examples_to_draw=5,
+               max_boxes_to_draw=20,
+               min_score_thresh=0.2,
+               use_normalized_coordinates=True,
+               summary_name_prefix='Crops_Debug'):
+    super(DebugCrops, self).__init__(
+        category_index=category_index,
+        max_examples_to_draw=max_examples_to_draw,
+        max_boxes_to_draw=max_boxes_to_draw,
+        min_score_thresh=min_score_thresh,
+        use_normalized_coordinates=use_normalized_coordinates,
+        summary_name_prefix=summary_name_prefix)
+
   def images_from_evaluation_dict(self, eval_dict):
     return tf.split(eval_dict['debug_crops'], axis=0,
       num_or_size_splits=tf.ones(150, dtype=tf.int32))

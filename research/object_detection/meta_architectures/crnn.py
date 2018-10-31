@@ -188,7 +188,7 @@ class CRNN:
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
         detection_boxes = tf.stop_gradient(detection_boxes)
-        rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
+        # rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
         flattened_detected_feature_maps, debug_crops = detection_model._compute_second_stage_input_feature_maps(
                   rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
                   debug_image=debug_image)
