@@ -61,7 +61,7 @@ class CRNN:
                 true_image_shapes=true_image_shapes)
             if mode == tf.estimator.ModeKeys.TRAIN:
                 global_step = tf.train.get_or_create_global_step()
-                disabled = tf.less(global_step, -1)
+                disabled = tf.less(global_step, 3000)
             else:
                 disabled = tf.constant(False, dtype=tf.bool)
             return tf.cond(disabled, self.no_result_fn(self.no_postprocessing),
