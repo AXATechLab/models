@@ -73,6 +73,8 @@ def _build_non_max_suppressor(nms_config):
     ValueError: On incorrect iou_threshold or on incompatible values of
       max_total_detections and max_detections_per_class.
   """
+  if nms_config.max_total_detections != 150:
+    raise ValueError("Please set max_total_detections and max_detections_per_class to 150, Debugging on crops will not work otherwise. (TODO)")
   if nms_config.iou_threshold < 0 or nms_config.iou_threshold > 1.0:
     raise ValueError('iou_threshold not in [0, 1.0].')
   if nms_config.max_detections_per_class > nms_config.max_total_detections:
