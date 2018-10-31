@@ -89,7 +89,7 @@ class CRNN:
         detections_dict.pop('detection_classes')
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections][0], tf.int32)
-        num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
+        # num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
         BATCH_COND = 'BatchCond'
@@ -119,8 +119,8 @@ class CRNN:
 
 
             positive_indicator = match.matched_column_indicator()
-            positive_indicator = tf.Print(positive_indicator, [match.matched_column_indices()], summarize=1000, message="Indices")
-            positive_indicator = tf.Print(positive_indicator, [gt_transcriptions[0]], summarize=1000, message="Num GTs")
+            # positive_indicator = tf.Print(positive_indicator, [match.matched_column_indices()], summarize=1000, message="Indices")
+            # positive_indicator = tf.Print(positive_indicator, [gt_transcriptions[0]], summarize=1000, message="Num GTs")
 
             # positive_indicator = tf.Print(positive_indicator, [positive_indicator], message="positive_indicator", summarize=99999)
             valid_indicator = tf.logical_and(
@@ -146,7 +146,7 @@ class CRNN:
                 sampled_padded_boxlist = normalized_sampled_boxlist
                 normalized_detection_boxes = sampled_padded_boxlist.get()
                 matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-                matched_transcriptions = tf.Print(matched_transcriptions, [matched_transcriptions], message="matched_transcriptions", summarize=1000)
+                # matched_transcriptions = tf.Print(matched_transcriptions, [matched_transcriptions], message="matched_transcriptions", summarize=1000)
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
                 detection_corpora = sampled_padded_boxlist.get_field(fields.BoxListFields.corpus)
                 num_detections = sampled_boxlist.num_boxes()
@@ -288,9 +288,12 @@ class CRNN:
             num_matches = tf.shape(sampled_matched_transcriptions)[0]
             pad_size = [[0, num_groundtruths - num_matches]]
             target_words, sparse_code_target = encode_groundtruth(sampled_matched_transcriptions)
+            # target_words = tf.Print(target_words, [tf.shape(target_words)], summarize=10000, message="Number of eval assignments")
             padded_target_words = tf.pad(target_words,
                 paddings=pad_size, constant_values='groundtruth')
             sampled_matched_predictions = tf.boolean_mask(predictions_dict['words'][0], sampled_indices)
+            # sampled_matched_predictions = tf.Print(sampled_matched_predictions, [tf.shape(sampled_matched_predictions)], summarize=10000, message="shape of pred words")
+
             padded_matched_predictions = tf.pad(sampled_matched_predictions,
                 paddings=pad_size, constant_values='prediction')
             recall, recall_op = tf.metrics.accuracy(padded_target_words, padded_matched_predictions,
@@ -305,7 +308,7 @@ class CRNN:
             precision = tf.Print(precision, [precision], message="Precision -- ")
             recall = tf.Print(recall, [recall], message="Recall -- ")
             CER = tf.Print(CER, [CER], message="CER -- ")
-            CER_op = tf.Print(CER_op, [predictions_dict['words'][0]], summarize=100)
+            # CER_op = tf.Print(CER_op, [predictions_dict['words'][0]], summarize=100)
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
                 'eval/recall' : (recall, recall_op),

@@ -992,7 +992,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       normalized_boxes_per_image = box_list_ops.to_absolute_coordinates(
           box_list.BoxList(proposal_boxes_per_image), feat_shape[1],
           feat_shape[2], check_range=False).get()
-      return normalized_boxes_per_image    
+      return normalized_boxes_per_image
     def gen_field_anchors(args):
       bbox = args[0]
       corpus = args[1]
@@ -1005,7 +1005,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       anchor_offset = self._first_stage_anchor_generator._anchor_offset
       offset_y = tf.cast(y_min, dtype=tf.float32) * anchor_stride[0] + anchor_offset[0]
       offset_x = tf.cast(x_min, dtype=tf.float32) * anchor_stride[1] + anchor_offset[1]
-      abs_field_anchors = tf.add(field_anchors, 
+      abs_field_anchors = tf.add(field_anchors,
         tf.concat([offset_y, offset_x, offset_y, offset_x], axis=0))
       return abs_field_anchors, corpus
     def tensors_to_boxlists(args):
@@ -1029,7 +1029,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     boxlists = list(map(tensors_to_boxlists, field_anchors_list))
     anchors = box_list_ops.concatenate(boxlists)
     #anchors.set(tf.Print(anchors.get(), [anchors.num_boxes()], message=("Num of anchors ")))
-    #box_list_ops.visualize_boxes_in_image(preprocessed_inputs[0], 
+    #box_list_ops.visualize_boxes_in_image(preprocessed_inputs[0],
     #  box_list_ops.to_normalized_coordinates(anchors, feature_image_shape[1], feature_image_shape[2]),
     #  normalized=True)
 
@@ -1591,7 +1591,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
               parallel_iterations=self._parallel_iterations))
     else:
       if stage == 'transcription':
-        crop_size = (2, 63)
+        crop_size = (1, 48)
       else:
         crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(
