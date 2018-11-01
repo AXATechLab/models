@@ -102,7 +102,7 @@ def build_transcription(model_config, detection_model, is_training, add_summarie
   if meta_architecture == None:
     return None
   if meta_architecture == 'crnn':
-    return _build_crnn_model(model_config.crnn, detection_model, is_training, add_summaries)
+    return _build_crnn_model(model_config.crnn, detection_model, add_summaries)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
 def build(model_config, is_training, add_summaries=True,
@@ -339,15 +339,21 @@ def _build_faster_rcnn_feature_extractor(
 
 
 
-def _build_crnn_model(crnn_config, detection_model, is_training, add_summaries=True):
+def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
   json_path = crnn_config.json_dir # placeholder for actual values
+  crop_size = crnn_config.crop_size
   dict_params = import_params_from_json(json_filename=json_path)
   parameters = Params(**dict_params)
   crnn_target_assigner = target_assigner.create_target_assigner(
       'CRNN', 'transcription',
       use_matmul_gather=False,
       iou_threshold=crnn_config.assigner_iou_threshold)
-  return CRNN(parameters, detection_model, crnn_target_assigner, is_training=is_training)  
+  crnn_template_assigner = target_assigner.create_target_assigner(
+      'CRNN', 'transcription',
+      use_matmul_gather=False,
+      iou_threshold=0.05)
+  return CRNN(parameters, detection_model, crnn_target_assigner, crnn_template_assigner,
+    crop_size)
 
 def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.

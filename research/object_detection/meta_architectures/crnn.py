@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-from core import box_list, box_list_ops
-from core import standard_fields as fields
+from object_detection.core import box_list, box_list_ops
+from object_detection.core import standard_fields as fields
 import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
 from src.model import deep_bidirectional_lstm, get_words_from_chars
@@ -10,14 +10,18 @@ from functools import partial
 
 class CRNN:
 
-    def __init__(self, parameters, detection_model, target_assigner, is_training):
+    def __init__(self, parameters, detection_model, target_assigner, template_assigner,
+        crop_size):
+        self._crop_size = [int(d) for d in crop_size]
         self.parameters = parameters
         self.detection_model = detection_model
         self.target_assigner = target_assigner
+        self.template_assigner = template_assigner
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
-                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64, value_dtype=tf.int64), -1)
+                tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64,
+                    value_dtype=tf.int64), -1)
         keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
         values = [c for c in parameters.alphabet_decoding]
         self.table_int2str = tf.contrib.lookup.HashTable(
@@ -83,14 +87,29 @@ class CRNN:
           fields.DetectionResultFields.detection_boxes][0]
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0]
-        detection_corpora = detections_dict[
-            fields.DetectionResultFields.detection_corpora][0]
+        # detection_corpora = detections_dict[
+        #     fields.DetectionResultFields.detection_corpora][0]
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop('detection_classes')
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections][0], tf.int32)
         # num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
+
+        # Corpora assignment
+        normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
+        detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
+            true_image_shapes[0, 0], true_image_shapes[0, 1])
+
+        template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
+        (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
+        template_corpora = tf.constant(detection_model.template_corpora, dtype=tf.int32)
+        padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
+        # Filter out false positives, TODO: move in EVAL
+        # positive_indicator = match.matched_column_indicator()
+        # valid_indicator = tf.range(detection_boxlist.num_boxes()) < num_detections
+        # sampled_indices = tf.logical_and(positive_indicator, valid_indicator)
+        # detection_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
         BATCH_COND = 'BatchCond'
         NULL = '?' # Question marks are unmapped so they will never be matched
@@ -105,6 +124,7 @@ class CRNN:
             detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(normalized_detection_boxes),
                 true_image_shapes[0, 0], true_image_shapes[0, 1])
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
+            detection_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
 
             (_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist,
                 gt_boxlists[0], gt_classes[0],
@@ -115,8 +135,6 @@ class CRNN:
             padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], NULL, NULL) # This list is padded with NULL
             # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the matched GTs transcr.", summarize=99999)
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
-            detection_boxlist.add_field(fields.BoxListFields.corpus, detection_corpora)
-
 
             positive_indicator = match.matched_column_indicator()
             # positive_indicator = tf.Print(positive_indicator, [match.matched_column_indices()], summarize=1000, message="Indices")
@@ -159,7 +177,7 @@ class CRNN:
 
             def eval_forward_pass():
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                    padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode)
+                    padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode)
                 return [self.zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -175,7 +193,7 @@ class CRNN:
 
 
         predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode),
+                padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode),
                 self.no_eval_op]
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
             self.no_result_fn(detections_dict), name=BATCH_COND)
@@ -190,7 +208,9 @@ class CRNN:
         rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
         flattened_detected_feature_maps = (
               detection_model._compute_second_stage_input_feature_maps(
-                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription'))
+                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
+                  crop_size=self._crop_size)
+              )
 
 
         with tf.variable_scope('Reshaping_cnn'):

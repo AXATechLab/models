@@ -1549,7 +1549,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     return box_list_ops.boolean_mask(proposal_boxlist, sampled_indices)
 
   def _compute_second_stage_input_feature_maps(self, features_to_crop,
-                                               proposal_boxes_normalized, stage='detection'):
+                                               proposal_boxes_normalized, stage='detection',
+                                               crop_size=None):
     """Crops to a set of proposals from the feature map for a batch of images.
 
     Helper function for self._postprocess_rpn. This function calls
@@ -1566,6 +1567,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     Returns:
       A float32 tensor with shape [K, new_height, new_width, depth].
     """
+    if stage == 'detection':
+      crop_size = (self._initial_crop_size, self._initial_crop_size)
     def get_box_inds(proposals):
       proposals_shape = proposals.get_shape().as_list()
       if any(dim is None for dim in proposals_shape):
@@ -1590,10 +1593,6 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
               dtype=tf.float32,
               parallel_iterations=self._parallel_iterations))
     else:
-      if stage == 'transcription':
-        crop_size = (3, 48)
-      else:
-        crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(
           features_to_crop,
           self._flatten_first_two_dimensions(proposal_boxes_normalized),
