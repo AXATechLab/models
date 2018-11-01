@@ -1549,7 +1549,8 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     return box_list_ops.boolean_mask(proposal_boxlist, sampled_indices)
 
   def _compute_second_stage_input_feature_maps(self, features_to_crop,
-                                               proposal_boxes_normalized, stage='detection', debug_image=None):
+                                               proposal_boxes_normalized, stage='detection', debug_image=None,
+                                               debug_boxes=None):
     """Crops to a set of proposals from the feature map for a batch of images.
 
     Helper function for self._postprocess_rpn. This function calls
@@ -1593,6 +1594,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       if stage == 'transcription':
         crop_size = (1, 48)
         crop_size_debug = (48, 768)
+        height = debug_boxes[:, 2] - debug_boxes[:, 0]
+        width = debug_boxes[:, 3] - debug_boxes[:, 1]
+        proposal_boxes_normalized = tf.Print(proposal_boxes_normalized, [crop_size[0] / height, crop_size[1] / width, height, width], message="Rescaled Aspect Ratios", summarize=300)
       else:
         crop_size = (self._initial_crop_size, self._initial_crop_size)
       cropped_regions = tf.image.crop_and_resize(

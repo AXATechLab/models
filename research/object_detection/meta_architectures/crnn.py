@@ -92,6 +92,8 @@ class CRNN:
             fields.DetectionResultFields.num_detections][0], tf.int32)
         # num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
+        debug_shape = tf.shape(rpn_features_to_crop)
+        debug_shape = tf.Print(debug_shape, [debug_shape], message='deubug shape', summarize=100)
 
         BATCH_COND = 'BatchCond'
         NULL = '?' # Question marks are unmapped so they will never be matched
@@ -105,6 +107,8 @@ class CRNN:
 
             detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(normalized_detection_boxes),
                 true_image_shapes[0, 0], true_image_shapes[0, 1])
+            debug_detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(normalized_detection_boxes),
+                debug_shape[1], debug_shape[2])
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
 
             (_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist,
@@ -154,13 +158,14 @@ class CRNN:
                 sparse_code_target = self.str2code(matched_transcriptions)
 
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
-                        detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image)
+                        detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image, debug_boxes=debug_detection_boxlist.get())
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                    padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image)
+                    padded_matched_transcriptions, detection_scores, detection_corpora, num_detections, mode, debug_image=debug_image,
+                    debug_boxes=debug_detection_boxlist.get())
                 return [self.zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -184,14 +189,14 @@ class CRNN:
 
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
-        detection_scores, detection_corpora, num_detections, mode, debug_image):
+        detection_scores, detection_corpora, num_detections, mode, debug_image, debug_boxes):
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
         detection_boxes = tf.stop_gradient(detection_boxes)
         # rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
         flattened_detected_feature_maps, debug_crops = detection_model._compute_second_stage_input_feature_maps(
                   rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
-                  debug_image=debug_image)
+                  debug_image=debug_image, debug_boxes=debug_boxes)
         flattened_detected_feature_maps = (flattened_detected_feature_maps)
 
         with tf.variable_scope('Reshaping_cnn'):
