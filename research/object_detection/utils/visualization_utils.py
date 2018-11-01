@@ -355,7 +355,7 @@ def draw_bounding_boxes_on_image_tensors(images,
   visualization_keyword_args = {
       'use_normalized_coordinates': use_normalized_coordinates,
       'max_boxes_to_draw': max_boxes_to_draw,
-      'min_score_thresh': min_score_thresh,
+      'min_score_thresh': 0.0,#min_score_thresh,
       'agnostic_mode': False,
       'line_thickness': 4,
   }
@@ -572,7 +572,7 @@ def visualize_boxes_and_labels_on_image_array(
     keypoints=None,
     use_normalized_coordinates=False,
     max_boxes_to_draw=20,
-    min_score_thresh=.5,
+    min_score_thresh=0.0,
     agnostic_mode=False,
     line_thickness=4,
     groundtruth_box_visualization_color='black',

@@ -1019,8 +1019,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
 
     #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer
-    template_boxes = tf.cast(tf.squeeze(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
-      to_absolute_boxes, elems=[template_boxes, batch_shape], dtype=tf.float32)), dtype=tf.int32)
+    self.absolute_template_boxes = tf.squeeze(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
+      to_absolute_boxes, elems=[template_boxes, batch_shape], dtype=tf.float32))
+    template_boxes = tf.cast(self.absolute_template_boxes, dtype=tf.int32)
     #anchors = box_list.BoxList(tf.placeholder(shape=(0, 4), dtype=tf.float32))
 
     #part_gen_field_anchors = partial(gen_field_anchors, anchors=anchors)

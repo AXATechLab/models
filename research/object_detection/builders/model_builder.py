@@ -347,7 +347,11 @@ def _build_crnn_model(crnn_config, detection_model, is_training, add_summaries=T
       'CRNN', 'transcription',
       use_matmul_gather=False,
       iou_threshold=crnn_config.assigner_iou_threshold)
-  return CRNN(parameters, detection_model, crnn_target_assigner, is_training=is_training)  
+  crnn_template_assigner = target_assigner.create_target_assigner(
+      'CRNN', 'transcription',
+      use_matmul_gather=False,
+      iou_threshold=0.05)
+  return CRNN(parameters, detection_model, crnn_target_assigner, crnn_template_assigner, is_training=is_training)
 
 def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.
