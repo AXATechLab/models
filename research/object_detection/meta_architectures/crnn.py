@@ -11,10 +11,13 @@ from functools import partial
 class CRNN:
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
-        crop_size):
+        crop_size, start_at_step):
         self._crop_size = [int(d) for d in crop_size]
+        self._start_at_step = start_at_step
         self.parameters = parameters
         self.detection_model = detection_model
+        self._backprop_feature_map = backprop_feature_map
+        self._backprop_detection = backprop_detection
         self.target_assigner = target_assigner
         self.template_assigner = template_assigner
         keys = [c for c in parameters.alphabet.encode('latin1')]
@@ -65,7 +68,7 @@ class CRNN:
                 true_image_shapes=true_image_shapes)
             if mode == tf.estimator.ModeKeys.TRAIN:
                 global_step = tf.train.get_or_create_global_step()
-                disabled = tf.less(global_step, 3000)
+                disabled = tf.less(global_step, self._start_at_step)
             else:
                 disabled = tf.constant(False, dtype=tf.bool)
             return tf.cond(disabled, self.no_result_fn(self.no_postprocessing),
@@ -204,8 +207,10 @@ class CRNN:
         detection_scores, detection_corpora, num_detections, mode):
         # Reuse the second stage cropping as-is
         detection_model = self.detection_model
-        detection_boxes = tf.stop_gradient(detection_boxes)
-        rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
+        if not self._backprop_detection:
+            detection_boxes = tf.stop_gradient(detection_boxes)
+        if not self._backprop_feature_map:
+            rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
         flattened_detected_feature_maps = (
               detection_model._compute_second_stage_input_feature_maps(
                   rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',

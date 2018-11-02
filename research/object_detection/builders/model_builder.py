@@ -342,6 +342,9 @@ def _build_faster_rcnn_feature_extractor(
 def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
   json_path = crnn_config.json_dir # placeholder for actual values
   crop_size = crnn_config.crop_size
+  start_at_step = crnn_config.start_at_step
+  backprop_feature_map = crnn.backprop_feature_map
+  backprop_detection = crnn.backprop_detection
   dict_params = import_params_from_json(json_filename=json_path)
   parameters = Params(**dict_params)
   crnn_target_assigner = target_assigner.create_target_assigner(
@@ -353,7 +356,7 @@ def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
       use_matmul_gather=False,
       iou_threshold=0.05)
   return CRNN(parameters, detection_model, crnn_target_assigner, crnn_template_assigner,
-    crop_size)
+    crop_size, start_at_step, backprop_feature_map, backprop_detection)
 
 def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.

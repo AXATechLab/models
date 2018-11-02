@@ -240,9 +240,8 @@ def write_saved_model(saved_model_path,
           sess, [tf.saved_model.tag_constants.SERVING],
           signature_def_map={
               signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
-                  detection_signature,  
-          },
-          main_op=main_op
+                  detection_signature,
+          }
       )
       builder.save()
 
@@ -274,7 +273,7 @@ def _get_outputs_from_inputs(input_tensors, detection_model,
   output_tensors = detection_model.predict(
       preprocessed_inputs, true_image_shapes)
   if transcription_model:
-    _, (postprocessed_tensors, _) = transcription_model.predict(output_tensors, true_image_shapes, 
+    _, postprocessed_tensors, _ = transcription_model.predict(output_tensors, true_image_shapes,
       tf.estimator.ModeKeys.PREDICT)
   else :
     postprocessed_tensors = detection_model.postprocess(
@@ -380,7 +379,6 @@ def _export_inference_graph(input_type,
     init_nodes = 'init_all_tables'
   else:
     init_nodes = ''
-  print(init_nodes, "!!!!!!!!!!!!!!!!!!")
   frozen_graph_def = freeze_graph.freeze_graph_with_def_protos(
       input_graph_def=tf.get_default_graph().as_graph_def(),
       input_saver_def=input_saver_def,
@@ -422,7 +420,7 @@ def export_inference_graph(input_type,
   """
   detection_model = model_builder.build(pipeline_config.model,
                                         is_training=False)
-  transcription_model = model_builder.build_transcription(pipeline_config.transcription_model, 
+  transcription_model = model_builder.build_transcription(pipeline_config.transcription_model,
     detection_model, is_training=False)
   graph_rewriter_fn = None
   if pipeline_config.HasField('graph_rewriter'):
