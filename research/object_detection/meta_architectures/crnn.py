@@ -4,9 +4,10 @@ from object_detection.core import box_list, box_list_ops
 from object_detection.core import standard_fields as fields
 import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
-from src.model import deep_bidirectional_lstm, get_words_from_chars
-from src.config import  CONST
+from tf_crnn.model import deep_bidirectional_lstm, get_words_from_chars
+from tf_crnn.config import  CONST
 from functools import partial
+from utils import shape_utils
 
 class CRNN:
 
@@ -201,6 +202,36 @@ class CRNN:
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
             self.no_result_fn(detections_dict), name=BATCH_COND)
 
+    def crop_feature_map(self, features_to_crop, bboxes):
+      output_height, output_width = self._crop_size
+      def _keep_aspect_ratio_crop_and_resize(args):
+        bbox, crop_width = args
+        fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
+          tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
+        crop_width = tf.Print(crop_width, [crop_width], message="Crop Width", summarize=9999)
+        padded_crop = tf.pad(fixed_height_crop[0],
+          [[0, 0], [0, output_width - crop_width], [0, 0]], "SYMMETRIC")
+        return padded_crop
+
+      aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
+      crop_widths = tf.cast(tf.round(aspect_ratios * output_height), tf.int32)
+      return shape_utils.static_or_dynamic_map_fn(
+              _keep_aspect_ratio_crop_and_resize,
+              elems=[bboxes, crop_widths],
+              dtype=tf.float32,
+              parallel_iterations=self.detection_model._parallel_iterations), crop_widths
+
+
+    # def keep_aspect_ratio_crop_and_resize(self, rpn_features_to_crop, detection_boxes):
+    #     normalized_crop_width = self._crop_size[1] / tf.shape(rpn_features_to_crop)[2]
+    #     ymin, xmin, ymax, xmax = tf.split(detection_boxes, 4, axis=1)
+    #     fixed_xmax = xmin + normalized_crop_width
+    #     fixed_detection_boxes = tf.concat([ymin, xmin, ymax, fixed_xmax], axis=1)
+    #     wider_crops = flattened_detected_feature_maps = (
+    #           self.detection_model._compute_second_stage_input_feature_maps(
+    #               rpn_features_to_crop, tf.expand_dims(fixed_detection_boxes, axis=0), stage='transcription',
+    #               crop_size=self._crop_size)
+    #           )
 
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
@@ -211,26 +242,18 @@ class CRNN:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
             rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
-        flattened_detected_feature_maps = (
-              detection_model._compute_second_stage_input_feature_maps(
-                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
-                  crop_size=self._crop_size)
-              )
+        flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
+            detection_boxes)    # [batch, height, width, features]
 
 
         with tf.variable_scope('Reshaping_cnn'):
-            shape = flattened_detected_feature_maps.get_shape().as_list()  # [batch, height, width, features]
-            print(shape)
+            n_channels = flattened_detected_feature_maps.get_shape().as_list()[3]
             transposed = tf.transpose(flattened_detected_feature_maps, perm=[0, 2, 1, 3],
                                       name='transposed')  # [batch, width, height, features]
-            conv_reshaped = tf.reshape(transposed, [-1, shape[2], shape[1] * shape[3]],
+            conv_reshaped = tf.reshape(transposed, [-1, self._crop_size[1], self._crop_size[0] * n_channels],
                                        name='reshaped')  # [batch, width, height x features]
         # detection_corpora = tf.Print(detection_corpora, [detection_corpora], message="corpora", summarize=100000)
-        additional_fields = {
-            'corpus' : detection_corpora,
-            'image_width': shape[2],
-        }
-        transcription_dict = self.lstm_layers(conv_reshaped, additional_fields, mode)
+        transcription_dict = self.lstm_layers(conv_reshaped, detection_corpora, seq_len_inputs, mode)
         transcription_dict['labels'] = matched_transcriptions
         # transcription_dict['label_codes'] = sparse_code_target
         detections_dict = {}
@@ -342,14 +365,11 @@ class CRNN:
             return eval_metric_ops
 
     # Code from crnn_fn
-    def lstm_layers(self, feature_maps, features, mode):
+    def lstm_layers(self, feature_maps, corpus, seq_len_inputs, mode):
         parameters = self.parameters
 
-        logprob, raw_pred = deep_bidirectional_lstm(feature_maps, features['corpus'], params=parameters, summaries=False)
-        # Compute seq_len from image width
-        # n_pools = CONST.DIMENSION_REDUCTION_W_POOLING  # 2x2 pooling in dimension W on layer 1 and 2
-        # seq_len_inputs = tf.divide(features['image_width'], n_pools, name='seq_len_input_op') - 1
-        seq_len_inputs = tf.zeros_like(features['corpus']) + features['image_width']
+        logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
+        # seq_len_inputs = tf.zeros_like(features['corpus']) + features['image_width']
         predictions_dict = {'prob': logprob,
                             'raw_predictions': raw_pred,
                             'seq_len_inputs': seq_len_inputs

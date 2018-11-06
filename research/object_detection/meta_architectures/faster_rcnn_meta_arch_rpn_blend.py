@@ -1549,8 +1549,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     return box_list_ops.boolean_mask(proposal_boxlist, sampled_indices)
 
   def _compute_second_stage_input_feature_maps(self, features_to_crop,
-                                               proposal_boxes_normalized, stage='detection',
-                                               crop_size=None):
+                                               proposal_boxes_normalized):
     """Crops to a set of proposals from the feature map for a batch of images.
 
     Helper function for self._postprocess_rpn. This function calls
@@ -1567,8 +1566,6 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     Returns:
       A float32 tensor with shape [K, new_height, new_width, depth].
     """
-    if stage == 'detection':
-      crop_size = (self._initial_crop_size, self._initial_crop_size)
     def get_box_inds(proposals):
       proposals_shape = proposals.get_shape().as_list()
       if any(dim is None for dim in proposals_shape):
@@ -1584,8 +1581,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
         return ops.matmul_crop_and_resize(
             tf.expand_dims(single_image_features_to_crop, 0),
             proposal_boxes_normalized,
-            [self._initial_crop_size, self._initial_crop_size])
-
+            crop_size)
       cropped_regions = self._flatten_first_two_dimensions(
           shape_utils.static_or_dynamic_map_fn(
               _single_image_crop_and_resize,
@@ -1594,16 +1590,15 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
               parallel_iterations=self._parallel_iterations))
     else:
       cropped_regions = tf.image.crop_and_resize(
-          features_to_crop,
-          self._flatten_first_two_dimensions(proposal_boxes_normalized),
-          get_box_inds(proposal_boxes_normalized),
-          crop_size)
-      if stage == 'transcription':
-        return cropped_regions
+        features_to_crop,
+        self._flatten_first_two_dimensions(proposal_boxes_normalized),
+        get_box_inds(proposal_boxes_normalized),
+        [self._initial_crop_size, self._initial_crop_size]
+      )
     return slim.max_pool2d(
-        cropped_regions,
-        [self._maxpool_kernel_size, self._maxpool_kernel_size],
-        stride=self._maxpool_stride)
+      cropped_regions,
+      [self._maxpool_kernel_size, self._maxpool_kernel_size],
+      stride=self._maxpool_stride)
 
   def _postprocess_box_classifier(self,
                                   refined_box_encodings,

@@ -56,7 +56,7 @@ from object_detection.utils import ops
 import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
 from object_detection.meta_architectures.crnn import CRNN
-from src.config import Params, import_params_from_json
+from tf_crnn.config import Params, import_params_from_json
 
 
 # A map of names to SSD feature extractors.
