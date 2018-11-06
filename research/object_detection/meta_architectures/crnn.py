@@ -12,7 +12,11 @@ from utils import shape_utils
 class CRNN:
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
+<<<<<<< HEAD
         crop_size, start_at_step, backprop_feature_map, backprop_detection):
+=======
+        crop_size, start_at_step):
+>>>>>>> d8b4d958caa89000f89873e6092165388dc18db7
         self._crop_size = [int(d) for d in crop_size]
         self._start_at_step = start_at_step
         self.parameters = parameters
@@ -242,8 +246,16 @@ class CRNN:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
             rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
+<<<<<<< HEAD
         flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
             detection_boxes)    # [batch, height, width, features]
+=======
+        flattened_detected_feature_maps = (
+              detection_model._compute_second_stage_input_feature_maps(
+                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
+                  crop_size=self._crop_size)
+              )
+>>>>>>> d8b4d958caa89000f89873e6092165388dc18db7
 
 
         with tf.variable_scope('Reshaping_cnn'):
