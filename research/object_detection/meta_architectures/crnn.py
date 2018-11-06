@@ -12,11 +12,7 @@ from utils import shape_utils
 class CRNN:
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
-<<<<<<< HEAD
         crop_size, start_at_step, backprop_feature_map, backprop_detection):
-=======
-        crop_size, start_at_step):
->>>>>>> d8b4d958caa89000f89873e6092165388dc18db7
         self._crop_size = [int(d) for d in crop_size]
         self._start_at_step = start_at_step
         self.parameters = parameters
@@ -79,8 +75,6 @@ class CRNN:
             return tf.cond(disabled, self.no_result_fn(self.no_postprocessing),
                 predict_fn, name="StepCond")
 
-
-
     def _predict(self, prediction_dict, true_image_shapes, mode):
         # Postprocess FasterRCNN stage 2
         detection_model = self.detection_model
@@ -91,23 +85,22 @@ class CRNN:
             prediction_dict['num_proposals'],
             prediction_dict['proposal_corpora'],
             true_image_shapes)
+        num_detections = tf.cast(detections_dict[
+            fields.DetectionResultFields.num_detections][0], tf.int32)
         normalized_detection_boxes = detections_dict[
-          fields.DetectionResultFields.detection_boxes][0]
+          fields.DetectionResultFields.detection_boxes][0][:num_detections]
+
         detection_scores = detections_dict[
-            fields.DetectionResultFields.detection_scores][0]
+            fields.DetectionResultFields.detection_scores][0][:num_detections]
         # detection_corpora = detections_dict[
         #     fields.DetectionResultFields.detection_corpora][0]
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop('detection_classes')
-        num_detections = tf.cast(detections_dict[
-            fields.DetectionResultFields.num_detections][0], tf.int32)
         # num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
         # Corpora assignment
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
-        detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
-            true_image_shapes[0, 0], true_image_shapes[0, 1])
 
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
@@ -129,7 +122,7 @@ class CRNN:
 
             # gt_transcriptions = tf.Print(gt_transcriptions, [gt_transcriptions, tf.shape(gt_transcriptions)], message="CRNN received this transcr.", summarize=99999)
 
-            detection_boxlist = box_list_ops.to_absolute_coordinates(box_list.BoxList(normalized_detection_boxes),
+            detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
                 true_image_shapes[0, 0], true_image_shapes[0, 1])
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
             detection_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
@@ -150,7 +143,7 @@ class CRNN:
 
             # positive_indicator = tf.Print(positive_indicator, [positive_indicator], message="positive_indicator", summarize=99999)
             valid_indicator = tf.logical_and(
-                tf.range(detection_boxlist.num_boxes()) < num_detections,
+                tf.range(detection_boxlist.num_boxes()) < num_detections, # not needed
                 cls_weights > 0
             )
             sampled_indices = detection_model._second_stage_sampler.subsample(
@@ -212,13 +205,16 @@ class CRNN:
         bbox, crop_width = args
         fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
           tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
-        crop_width = tf.Print(crop_width, [crop_width], message="Crop Width", summarize=9999)
+        # crop_width = tf.Print(crop_width, [crop_width], message="Crop Width", summarize=9999)
         padded_crop = tf.pad(fixed_height_crop[0],
-          [[0, 0], [0, output_width - crop_width], [0, 0]], "SYMMETRIC")
+          [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
         return padded_crop
 
       aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
-      crop_widths = tf.cast(tf.round(aspect_ratios * output_height), tf.int32)
+      crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
+        output_width)
+
+      bboxes = tf.Print(bboxes, [tf.shape(bboxes), tf.shape(crop_widths), tf.shape(aspect_ratios)], message="bboxes", summarize=9999)
       return shape_utils.static_or_dynamic_map_fn(
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
@@ -246,16 +242,9 @@ class CRNN:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
             rpn_features_to_crop = tf.stop_gradient(rpn_features_to_crop)
-<<<<<<< HEAD
+
         flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
             detection_boxes)    # [batch, height, width, features]
-=======
-        flattened_detected_feature_maps = (
-              detection_model._compute_second_stage_input_feature_maps(
-                  rpn_features_to_crop, tf.expand_dims(detection_boxes, axis=0), stage='transcription',
-                  crop_size=self._crop_size)
-              )
->>>>>>> d8b4d958caa89000f89873e6092165388dc18db7
 
 
         with tf.variable_scope('Reshaping_cnn'):
@@ -300,13 +289,16 @@ class CRNN:
         with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
             loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
                                       inputs=predictions_dict['prob'],
-                                      sequence_length=seq_len_inputs,#tf.cast([seq_len_inputs] * batch_size, tf.int32),
+                                      sequence_length=seq_len_inputs,
                                       preprocess_collapse_repeated=False,
                                       ctc_merge_repeated=True,
                                       ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
                                       time_major=True)
             loss_ctc = tf.reduce_mean(loss_ctc)
-            # loss_ctc = tf.Print(loss_ctc, [loss_ctc], message='* Loss : ')
+
+            seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
+                                         minlength= tf.shape(predictions_dict['prob'])[1])
+            loss_ctc = tf.Print(loss_ctc, [loss_ctc, seq_lengths_labels], message='* Loss : ', summarize=10000000)
         return loss_ctc
 
 
@@ -380,6 +372,9 @@ class CRNN:
     def lstm_layers(self, feature_maps, corpus, seq_len_inputs, mode):
         parameters = self.parameters
 
+        seq_len_inputs = tf.Print(seq_len_inputs, [seq_len_inputs], message="seq_len_inputs", summarize=99999)
+
+
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
         # seq_len_inputs = tf.zeros_like(features['corpus']) + features['image_width']
         predictions_dict = {'prob': logprob,
@@ -408,6 +403,7 @@ class CRNN:
                           for i in range(parameters.top_paths)]
 
             predictions_dict['words'] = tf.stack(list_preds)
+            predictions_dict['words'] = tf.Print(predictions_dict['words'], [predictions_dict['words'][0]], message="predictions_dict['words']", summarize=100)
 
         return predictions_dict
 
