@@ -121,6 +121,11 @@ def _create_learning_rate(learning_rate_config):
         config.warmup_steps,
         config.hold_base_rate_steps)
 
+  if learning_rate_type == 'lr_find':
+    config = learning_rate_config.lr_find
+    initial = config.initial_learning_rate
+    learning_rate = tf.math.pow(2, tf.train.get_or_create_global_step()) * initial
+
   if learning_rate is None:
     raise ValueError('Learning_rate %s not supported.' % learning_rate_type)
 

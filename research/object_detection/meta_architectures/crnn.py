@@ -214,7 +214,7 @@ class CRNN:
       crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
         output_width)
 
-      bboxes = tf.Print(bboxes, [tf.shape(bboxes), tf.shape(crop_widths), tf.shape(aspect_ratios)], message="bboxes", summarize=9999)
+      # bboxes = tf.Print(bboxes, [tf.shape(bboxes), tf.shape(crop_widths), tf.shape(aspect_ratios)], message="bboxes", summarize=9999)
       return shape_utils.static_or_dynamic_map_fn(
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
@@ -298,7 +298,7 @@ class CRNN:
 
             seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
                                          minlength= tf.shape(predictions_dict['prob'])[1])
-            loss_ctc = tf.Print(loss_ctc, [loss_ctc, seq_lengths_labels], message='* Loss : ', summarize=10000000)
+            # loss_ctc = tf.Print(loss_ctc, [loss_ctc, seq_lengths_labels], message='* Loss : ', summarize=10000000)
         return loss_ctc
 
 
@@ -372,7 +372,7 @@ class CRNN:
     def lstm_layers(self, feature_maps, corpus, seq_len_inputs, mode):
         parameters = self.parameters
 
-        seq_len_inputs = tf.Print(seq_len_inputs, [seq_len_inputs], message="seq_len_inputs", summarize=99999)
+        # seq_len_inputs = tf.Print(seq_len_inputs, [seq_len_inputs], message="seq_len_inputs", summarize=99999)
 
 
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
@@ -403,7 +403,7 @@ class CRNN:
                           for i in range(parameters.top_paths)]
 
             predictions_dict['words'] = tf.stack(list_preds)
-            predictions_dict['words'] = tf.Print(predictions_dict['words'], [predictions_dict['words'][0]], message="predictions_dict['words']", summarize=100)
+            # predictions_dict['words'] = tf.Print(predictions_dict['words'], [predictions_dict['words'][0]], message="predictions_dict['words']", summarize=100)
 
         return predictions_dict
 

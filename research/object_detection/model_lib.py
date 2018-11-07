@@ -326,7 +326,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
       if two_stages:
-        # transcription_loss = transcription_model.loss(transcription_dict)
         losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
