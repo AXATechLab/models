@@ -443,6 +443,9 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
   second_stage_sampler = sampler.BalancedPositiveNegativeSampler(
       positive_fraction=frcnn_config.second_stage_balance_fraction,
       is_static=frcnn_config.use_static_balanced_label_sampler and is_training)
+  # Switch this on to remove nms during training
+  # if is_training:
+  #   frcnn_config.second_stage_post_processing.batch_non_max_suppression.iou_threshold = 0.0
   (second_stage_non_max_suppression_fn, second_stage_score_conversion_fn
   ) = post_processing_builder.build(frcnn_config.second_stage_post_processing)
   second_stage_localization_loss_weight = (

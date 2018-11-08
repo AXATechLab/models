@@ -57,7 +57,7 @@ def build(optimizer_config):
     config = optimizer_config.adam_optimizer
     learning_rate = _create_learning_rate(config.learning_rate)
     summary_vars.append(learning_rate)
-    optimizer = tf.train.AdamOptimizer(learning_rate)
+    optimizer = tf.train.AdamOptimizer(learning_rate, beta1=0.5, epsilon=1e-04) #
 
   if optimizer is None:
     raise ValueError('Optimizer %s not supported.' % optimizer_type)
@@ -124,7 +124,11 @@ def _create_learning_rate(learning_rate_config):
   if learning_rate_type == 'lr_find':
     config = learning_rate_config.lr_find
     initial = config.initial_learning_rate
-    learning_rate = tf.math.pow(2, tf.train.get_or_create_global_step()) * initial
+    # power = tf.train.get_or_create_global_step() // 100
+    # learning_rate = tf.pow(tf.cast(2, dtype=tf.int64), power) * initial
+    global_step = tf.cast(tf.train.get_or_create_global_step(), dtype=tf.float32)
+    learning_rate = tf.maximum(global_step,
+      tf.constant(1, dtype=tf.float32)) * tf.constant(initial)
 
   if learning_rate is None:
     raise ValueError('Learning_rate %s not supported.' % learning_rate_type)

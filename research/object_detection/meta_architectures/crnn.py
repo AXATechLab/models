@@ -102,6 +102,16 @@ class CRNN:
         # Corpora assignment
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
 
+        if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
+            gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
+                stage='transcription')
+
+        # Switch this on to train on groundtruth
+        # if mode == tf.estimator.ModeKeys.TRAIN:
+        #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+        #         true_image_shapes[0, 0], true_image_shapes[0, 1])
+
+
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
         template_corpora = tf.constant(detection_model.template_corpora, dtype=tf.int32)
@@ -117,13 +127,14 @@ class CRNN:
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-            gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
-                stage='transcription')
+            # gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
+            #     stage='transcription')
 
             # gt_transcriptions = tf.Print(gt_transcriptions, [gt_transcriptions, tf.shape(gt_transcriptions)], message="CRNN received this transcr.", summarize=99999)
 
             detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
                 true_image_shapes[0, 0], true_image_shapes[0, 1])
+
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
             detection_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
 
@@ -171,7 +182,7 @@ class CRNN:
                 num_detections = sampled_boxlist.num_boxes()
                 sparse_code_target = self.str2code(matched_transcriptions)
 
-                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
+                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions, #
                         detection_scores, detection_corpora, num_detections, mode)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
@@ -294,6 +305,8 @@ class CRNN:
                                       ctc_merge_repeated=True,
                                       ignore_longer_outputs_than_inputs=True,  # returns zero gradient in case it happens -> ema loss = NaN
                                       time_major=True)
+            # loss_ctc = tf.cond(tf.is_nan(loss_ctc), lambda: tf.Print(0, [], message="NaN loss"),
+            #     lambda: tf.reduce_mean(loss_ctc))
             loss_ctc = tf.reduce_mean(loss_ctc)
 
             seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32), #array of labels length
