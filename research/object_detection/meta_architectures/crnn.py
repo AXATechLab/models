@@ -33,6 +33,7 @@ class CRNN:
 
 
         self.zero_loss = tf.constant(0, dtype=tf.float32)
+        self.NULL = '?'
 
         self.no_eval_op = {
             'eval/precision' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
@@ -105,12 +106,17 @@ class CRNN:
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
                 stage='transcription')
+            normalized_gt_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+                true_image_shapes[0, 0], true_image_shapes[0, 1])
 
         # Switch this on to train on groundtruth
         # if mode == tf.estimator.ModeKeys.TRAIN:
         #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
         #         true_image_shapes[0, 0], true_image_shapes[0, 1])
 
+        # Switch this on to train on groundtruth and detections
+        # if mode == tf.estimator.ModeKeys.TRAIN:
+        #     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
 
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
@@ -123,7 +129,6 @@ class CRNN:
         # detection_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
         BATCH_COND = 'BatchCond'
-        NULL = '?' # Question marks are unmapped so they will never be matched
         # rpn_features_to_crop = tf.Print(rpn_features_to_crop, [tf.shape(rpn_features_to_crop)], message="The size of the Feature Map is", summarize=9999)
 
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
@@ -144,7 +149,7 @@ class CRNN:
                 [1] + detection_model._num_classes * [0], dtype=tf.float32),
                 groundtruth_weights=gt_weights[0])
 
-            padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], NULL, NULL) # This list is padded with NULL
+            padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL) # This list is padded with NULL
             # detection_transcriptions = tf.Print(detection_transcriptions, [detection_transcriptions], message="These are the matched GTs transcr.", summarize=99999)
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
 
@@ -200,7 +205,7 @@ class CRNN:
                 loss, predictions_dict = tf.cond(tf.constant(False, dtype=tf.bool),
                     lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
                 eval_metric_ops = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
-                    gt_transcriptions[0])
+                    normalized_gt_boxlist, gt_transcriptions[0])
             return [loss, predictions_dict, eval_metric_ops]
 
 
@@ -315,7 +320,7 @@ class CRNN:
         return loss_ctc
 
 
-    def compute_eval_ops(self, predictions_dict, matched_transcriptions, sampled_indices, gt_transcriptions):
+    def compute_eval_ops(self, predictions_dict, matched_transcriptions, dt_positive_indices, gt_boxlist, gt_transcriptions):
         """
             Compute Precision, Recall and Character Error Rate (CER).
 
@@ -340,31 +345,27 @@ class CRNN:
                 seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32), #array of labels length
                                  minlength= tf.shape(matched_transcriptions)[0])
                 target_chars = self.table_int2str.lookup(tf.cast(matched_codes, tf.int64))
-                return get_words_from_chars(target_chars.values, seq_lengths_labels), matched_codes
+                return get_words_from_chars(target_chars.values, seq_lengths_labels)
+
+            all_predictions = predictions_dict['words'][0]
 
             # Compute Precision
-            target_words, _ = encode_groundtruth(matched_transcriptions)
-            precision, precision_op = tf.metrics.accuracy(target_words, predictions_dict['words'][0],
+            target_words = encode_groundtruth(matched_transcriptions)
+            precision, precision_op = tf.metrics.accuracy(target_words, all_predictions,
                 name='precision')
 
             # Compute Recall
-            sampled_matched_transcriptions = tf.boolean_mask(matched_transcriptions, sampled_indices)
-            num_groundtruths = gt_transcriptions.get_shape().as_list()[0]
-            num_matches = tf.shape(sampled_matched_transcriptions)[0]
-            pad_size = [[0, num_groundtruths - num_matches]]
-            target_words, sparse_code_target = encode_groundtruth(sampled_matched_transcriptions)
-            # target_words = tf.Print(target_words, [tf.shape(target_words)], summarize=10000, message="Number of eval assignments")
-            padded_target_words = tf.pad(target_words,
-                paddings=pad_size, constant_values='groundtruth')
-            sampled_matched_predictions = tf.boolean_mask(predictions_dict['words'][0], sampled_indices)
-            # sampled_matched_predictions = tf.Print(sampled_matched_predictions, [tf.shape(sampled_matched_predictions)], summarize=10000, message="shape of pred words")
-
-            padded_matched_predictions = tf.pad(sampled_matched_predictions,
-                paddings=pad_size, constant_values='prediction')
-            recall, recall_op = tf.metrics.accuracy(padded_target_words, padded_matched_predictions,
+            detection_boxlist = box_list.BoxList(predictions_dict['detection_boxes'])
+            (_, _, _, _, match) = self.target_assigner.assign(gt_boxlist, detection_boxlist)
+            padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
+            target_words = encode_groundtruth(gt_transcriptions)
+            recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
                 name='recall')
 
             # Compute Character Error Rate
+            sampled_matched_transcriptions = tf.boolean_mask(matched_transcriptions, dt_positive_indices)
+            sampled_matched_predictions = tf.boolean_mask(all_predictions, dt_positive_indices)
+            sparse_code_target = self.str2code(sampled_matched_transcriptions)
             sparse_code_pred = self.str2code(sampled_matched_predictions)
             CER, CER_op = tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
                  tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
