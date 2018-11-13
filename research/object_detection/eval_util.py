@@ -547,6 +547,7 @@ def result_dict_for_single_example(image,
   }
 
   detection_fields = fields.DetectionResultFields
+  transcription_fields = fields.TranscriptionResultFields
   detection_boxes = detections[detection_fields.detection_boxes][0]
   image_shape = tf.shape(image)
   detection_scores = detections[detection_fields.detection_scores][0]
@@ -622,9 +623,9 @@ def result_dict_for_single_example(image,
       output_dict[input_data_fields.groundtruth_classes] = groundtruth_classes
 
     # Handle transcription stage
-    if 'words' in detections:
-      output_dict['prob'] = detections['prob']
-      output_dict['words'] = detections['words'][0]
+    if transcription_fields.words in detections:
+      output_dict[transcription_fields.score] = detections[transcription_fields.score]
+      output_dict[transcription_fields.words] = detections[transcription_fields.words][0]
       if groundtruth:
         output_dict[input_data_fields.groundtruth_transcription] = groundtruth[input_data_fields.groundtruth_transcription]
   return output_dict

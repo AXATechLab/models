@@ -269,13 +269,13 @@ def draw_bounding_boxes_on_image(image,
 
 
 
-def _visualize_boxes(image, boxes, classes, scores, transcriptions, category_index, **kwargs):
+def _visualize_boxes(image, boxes, classes, scores, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image, boxes, classes, scores, category_index=category_index,
-      transcriptions=transcriptions, **kwargs)
+      transcriptions=transcriptions, transcription_scores=transcription_scores, **kwargs)
 
 
-def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcriptions,
+def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcriptions, transcription_scores,
                                category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -288,7 +288,7 @@ def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcripti
       **kwargs)
 
 
-def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, transcriptions,
+def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, transcriptions, transcription_scores,
                                    category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -298,11 +298,12 @@ def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, tra
       category_index=category_index,
       keypoints=keypoints,
       transcriptions=transcriptions,
+      transcription_scores=transcription_scores,
       **kwargs)
 
 
 def _visualize_boxes_and_masks_and_keypoints(
-    image, boxes, classes, scores, masks, keypoints, transcriptions, category_index, **kwargs):
+    image, boxes, classes, scores, masks, keypoints, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
@@ -312,6 +313,7 @@ def _visualize_boxes_and_masks_and_keypoints(
       instance_masks=masks,
       keypoints=keypoints,
       transcriptions=transcriptions,
+      transcription_scores=transcription_scores,
       **kwargs)
 
 
@@ -321,6 +323,7 @@ def draw_bounding_boxes_on_image_tensors(images,
                                          scores,
                                          category_index,
                                          transcriptions=None,
+                                         transription_scores=None,
                                          instance_masks=None,
                                          keypoints=None,
                                          max_boxes_to_draw=20,
@@ -386,9 +389,9 @@ def draw_bounding_boxes_on_image_tensors(images,
     elems = [images, boxes, classes, scores]
 
   if transcriptions is not None:
-    elems.append(transcriptions)
+    elems.append([transcriptions, transcription_scores])
   else:
-    elems.append(tf.fill(tf.shape(boxes)[0:2], 'N/A'))
+    elems.append([tf.fill(tf.shape(boxes)[0:2], 'N/A') for i in range(2)])
 
   def draw_boxes(image_and_detections):
     """Draws boxes on image."""
@@ -425,6 +428,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
   """
   detection_fields = fields.DetectionResultFields()
   input_data_fields = fields.InputDataFields()
+  transcription_fields = fields.TranscriptionResultFields()
   instance_masks = None
   if detection_fields.detection_masks in eval_dict:
     instance_masks = tf.cast(
@@ -440,11 +444,12 @@ def draw_side_by_side_evaluation_image(eval_dict,
         tf.expand_dims(
             eval_dict[input_data_fields.groundtruth_instance_masks], axis=0),
         tf.uint8)
-  transcriptions = None
-  if 'words' in eval_dict:
-    transcriptions = tf.expand_dims(eval_dict['words'], axis=0)
+  transcriptions, scores = None, None
+  if transcription_fields.words in eval_dict:
+    transcriptions = tf.expand_dims(eval_dict[transcription_fields.words], axis=0)
     groundtruth_transcriptions = tf.expand_dims(eval_dict[
       input_data_fields.groundtruth_transcription], axis=0)
+    scores = tf.expand_dims(eval_dict[transcription_fields.score], axis=0)
 
   images_with_detections = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
@@ -453,6 +458,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
       tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
       category_index,
       transcriptions=transcriptions,
+      transcription_scores=scores,
       instance_masks=instance_masks,
       keypoints=keypoints,
       max_boxes_to_draw=max_boxes_to_draw,
@@ -566,6 +572,7 @@ def visualize_boxes_and_labels_on_image_array(
     scores,
     category_index,
     transcriptions=None,
+    transcription_scores=None,
     instance_masks=None,
     instance_boundaries=None,
     keypoints=None,
@@ -653,7 +660,11 @@ def visualize_boxes_and_labels_on_image_array(
           if not display_str:
             display_str = '{}%'.format(int(100*scores[i]))
           else:
-            display_str = '{}: {}%'.format(display_str, int(100*scores[i]))
+            if transcription_scores is not None:
+              display_str = '{}: detection {}%, transcription {}%'.format(display_str, int(100*scores[i]),
+                int(100*transcription_scores[i]))
+            else:
+              display_str = '{}: {}%'.format(display_str, int(100*scores[i]))
         box_to_display_str_map[box].append(display_str)
         if agnostic_mode:
           box_to_color_map[box] = 'DarkOrange'
