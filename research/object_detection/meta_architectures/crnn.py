@@ -114,15 +114,9 @@ class CRNN:
             #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
             #         true_image_shapes[0, 0], true_image_shapes[0, 1])
 
-<<<<<<< HEAD
             # Switch this on to train on groundtruth and detections
             if mode == tf.estimator.ModeKeys.TRAIN:
                 normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
-=======
-        # Switch this on to train on groundtruth and detections
-        # if mode == tf.estimator.ModeKeys.TRAIN:
-        #     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
->>>>>>> c9028c549076ae65bb7016ff48622d3a87cd0b7e
 
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
