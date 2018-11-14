@@ -41,10 +41,10 @@ class CRNN:
             'eval/CER' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
         }
         self.no_postprocessing = {
-            'detection_boxes' : tf.constant(0, dtype=tf.float32),
-            'detection_scores' : tf.constant(0, dtype=tf.float32),
-            'detection_corpora' : tf.constant(0, dtype=tf.int32),
-            'num_detections' : tf.constant(0, dtype=tf.float32)
+            fields.DetectionResultFields.detection_boxes : tf.constant(0, dtype=tf.float32),
+            fields.DetectionResultFields.detection_scores : tf.constant(0, dtype=tf.float32),
+            fields.DetectionResultFields.detection_corpora : tf.constant(0, dtype=tf.int32),
+            fields.DetectionResultFields.num_detections : tf.constant(0, dtype=tf.float32)
         }
 
     def no_result_fn(self, detections_dict):
@@ -56,8 +56,8 @@ class CRNN:
             'labels': tf.constant('', dtype=tf.string),
             'seq_len_inputs': 0,
             'prob': tf.constant([[0], [0]], dtype=tf.float32),
-            'score': tf.constant(0, dtype=tf.float32),
-            'words': tf.constant('', dtype=tf.string)
+            fields.TranscriptionResultFields.score: tf.constant(0, dtype=tf.float32),
+            fields.TranscriptionResultFields.words: tf.constant('', dtype=tf.string)
         }
         transcriptions_dict.update(detections_dict)
         return [self.zero_loss, transcriptions_dict]
@@ -96,7 +96,7 @@ class CRNN:
         # detection_corpora = detections_dict[
         #     fields.DetectionResultFields.detection_corpora][0]
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
-        detections_dict.pop('detection_classes')
+        detections_dict.pop(fields.DetectionResultFields.detection_classes)
         # num_detections = tf.Print(num_detections, [num_detections], message="Num detections")
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
@@ -274,10 +274,10 @@ class CRNN:
         transcription_dict['labels'] = matched_transcriptions
         # transcription_dict['label_codes'] = sparse_code_target
         detections_dict = {}
-        detections_dict['detection_boxes'] = detection_boxes
-        detections_dict['detection_scores'] = detection_scores
-        detections_dict['detection_corpora'] = detection_corpora
-        detections_dict['num_detections'] = tf.cast(num_detections, dtype=tf.float32)
+        detections_dict[fields.DetectionResultFields.detection_boxes] = detection_boxes
+        detections_dict[fields.DetectionResultFields.detection_scores] = detection_scores
+        detections_dict[fields.DetectionResultFields.detection_corpora] = detection_corpora
+        detections_dict[fields.DetectionResultFields.num_detections] = tf.cast(num_detections, dtype=tf.float32)
         for k,v in detections_dict.items():
             detections_dict[k] = tf.expand_dims(v, axis=0)
         transcription_dict.update(detections_dict)
@@ -347,7 +347,7 @@ class CRNN:
                 target_chars = self.table_int2str.lookup(tf.cast(matched_codes, tf.int64))
                 return get_words_from_chars(target_chars.values, seq_lengths_labels)
 
-            all_predictions = predictions_dict['words'][0]
+            all_predictions = predictions_dict[fields.TranscriptionResultFields.words][0]
 
             # Compute Precision
             target_words = encode_groundtruth(matched_transcriptions)
@@ -355,7 +355,7 @@ class CRNN:
                 name='precision')
 
             # Compute Recall
-            detection_boxlist = box_list.BoxList(predictions_dict['detection_boxes'][0])
+            detection_boxlist = box_list.BoxList(predictions_dict[fields.DetectionResultFields.detection_boxes][0])
             (_, _, _, _, match) = self.target_assigner.assign(gt_boxlist, detection_boxlist)
             padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
             unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
@@ -407,7 +407,7 @@ class CRNN:
                                                                               top_paths=parameters.nb_logprob)
             # confidence value
 
-            predictions_dict['score'] = log_probability
+            predictions_dict[fields.TranscriptionResultFields.score] = log_probability
 
             sequence_lengths_pred = [tf.bincount(tf.cast(sparse_code_pred[i].indices[:, 0], tf.int32),
                                                 minlength=tf.shape(predictions_dict['prob'])[1]) for i in range(parameters.top_paths)]
@@ -417,7 +417,7 @@ class CRNN:
             list_preds = [get_words_from_chars(pred_chars[i].values, sequence_lengths=sequence_lengths_pred[i])
                           for i in range(parameters.top_paths)]
 
-            predictions_dict['words'] = tf.stack(list_preds)
+            predictions_dict[fields.TranscriptionResultFields.words] = tf.stack(list_preds)
             # predictions_dict['words'] = tf.Print(predictions_dict['words'], [predictions_dict['words'][0]], message="predictions_dict['words']", summarize=100)
 
         return predictions_dict

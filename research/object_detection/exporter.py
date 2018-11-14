@@ -465,6 +465,7 @@ def profile_inference_graph(graph):
       '.*BatchNorm.*', '.*Initializer.*', '.*Regularizer.*', '.*BiasAdd.*'
   ]
 
+  # Deprecated
   tf.contrib.tfprof.model_analyzer.print_model_analysis(
       graph,
       tfprof_options=tfprof_vars_option)
@@ -472,4 +473,6 @@ def profile_inference_graph(graph):
   tf.contrib.tfprof.model_analyzer.print_model_analysis(
       graph,
       tfprof_options=tfprof_flops_option)
+
+  tf.profiler.profile(graph, None, None, cmd, options)
 

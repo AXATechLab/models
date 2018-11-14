@@ -24,6 +24,7 @@ message TrainConfig {
 
   // Optimizer used to train the DetectionModel.
   optional Optimizer optimizer = 5;
+  optional Optimizer transcription_optimizer = 27;
 
   // If greater than 0, clips gradients by this value.
   optional float gradient_clipping_by_norm = 6 [default=0.0];

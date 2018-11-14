@@ -210,7 +210,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         configurations.
     """
     params = params or {}
-    total_loss, train_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, {}
+    total_loss, train_op, train_transcription_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, None, {}
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
@@ -325,8 +325,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
-      if two_stages:
-        losses_dict['ctc_loss'] = transcription_loss
+      # if two_stages:
+      #   losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       if train_config.add_regularization_loss:
         regularization_losses = tf.get_collection(
@@ -348,6 +348,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       # can write learning rate summaries on TPU without host calls.
       training_optimizer, optimizer_summary_vars = optimizer_builder.build(
           train_config.optimizer)
+      if train_config.transcription_optimizer:
+        transcription_optimizer, _ = optimizer_builder.build(
+            train_config.transcription_optimizer)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if use_tpu:
@@ -386,6 +389,16 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           learning_rate=None,
           clip_gradients=clip_gradients_value,
           optimizer=training_optimizer,
+          variables=trainable_variables,
+          summaries=summaries,
+          name='')  # Preventing scope prefix on all variables.
+
+      train_transcription_op = tf.contrib.layers.optimize_loss(
+          loss=transcription_loss,
+          global_step=global_step,
+          learning_rate=None,
+          clip_gradients=clip_gradients_value, # Remove
+          optimizer=transcription_optimizer,
           variables=trainable_variables,
           summaries=summaries,
           name='')  # Preventing scope prefix on all variables.
@@ -484,8 +497,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=final_response,
-          loss=total_loss,
-          train_op=train_op,
+          loss=total_loss + transcription_loss,
+          train_op=tf.group(train_op, train_transcription_op),
           eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
           scaffold=scaffold)
