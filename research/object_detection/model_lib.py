@@ -210,7 +210,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         configurations.
     """
     params = params or {}
-    total_loss, train_op, train_transcription_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, None, {}
+    total_loss, train_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, {}
+    transcription_loss = 0
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
@@ -348,9 +349,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       # can write learning rate summaries on TPU without host calls.
       training_optimizer, optimizer_summary_vars = optimizer_builder.build(
           train_config.optimizer)
-      if train_config.transcription_optimizer:
+      if not train_config.transcription_optimizer.use_detection:
         transcription_optimizer, _ = optimizer_builder.build(
             train_config.transcription_optimizer)
+      elif two_stages:
+        transcription_optimizer = training_optimizer
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if use_tpu:
@@ -383,7 +386,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       #grads_and_vars = training_optimizer.compute_gradients(total_loss)
       #total_loss = tf.Print(total_loss, [grads_and_vars[0][0]], message=str(grads_and_vars[0][1].name))
 
-      train_op = tf.contrib.layers.optimize_loss(
+      train_detection_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,
           learning_rate=None,
@@ -393,15 +396,21 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           summaries=summaries,
           name='')  # Preventing scope prefix on all variables.
 
-      train_transcription_op = tf.contrib.layers.optimize_loss(
-          loss=transcription_loss,
-          global_step=global_step,
-          learning_rate=None,
-          clip_gradients=clip_gradients_value, # Remove
-          optimizer=transcription_optimizer,
-          variables=trainable_variables,
-          summaries=summaries,
-          name='')  # Preventing scope prefix on all variables.
+      if is_training:
+        if two_stages:
+          train_transcription_op = tf.contrib.layers.optimize_loss(
+              loss=transcription_loss,
+              global_step=global_step,
+              learning_rate=None,
+              clip_gradients=clip_gradients_value, # Remove
+              optimizer=transcription_optimizer,
+              variables=trainable_variables,
+              summaries=summaries,
+              name='')  # Preventing scope prefix on all variables.
+
+          train_op = tf.group(train_detection_op, train_transcription_op)
+        else:
+          train_op = train_detection_op
 
     if mode == tf.estimator.ModeKeys.PREDICT:
       export_outputs = {
@@ -489,7 +498,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           mode=mode,
           scaffold_fn=scaffold_fn,
           predictions=final_response,
-          loss=total_loss,
+          loss=total_loss + transcription_loss,
           train_op=train_op,
           eval_metrics=eval_metric_ops,
           export_outputs=export_outputs)
@@ -498,7 +507,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           mode=mode,
           predictions=final_response,
           loss=total_loss + transcription_loss,
-          train_op=tf.group(train_op, train_transcription_op),
+          train_op=train_op,
           eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
           scaffold=scaffold)

@@ -57,7 +57,7 @@ def build(optimizer_config):
     config = optimizer_config.adam_optimizer
     learning_rate = _create_learning_rate(config.learning_rate)
     summary_vars.append(learning_rate)
-    optimizer = tf.train.AdamOptimizer(learning_rate, epsilon=0.1) #
+    optimizer = tf.train.AdamOptimizer(learning_rate, epsilon=config.epsilon) #
 
   if optimizer is None:
     raise ValueError('Optimizer %s not supported.' % optimizer_type)

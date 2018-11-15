@@ -25,6 +25,10 @@ import tensorflow as tf
 from object_detection import model_hparams
 from object_detection import model_lib
 
+import os
+# os.environ['TF_CPP_MIN_VLOG_LEVEL']= '3'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 flags.DEFINE_string(
     'model_dir', None, 'Path to output model directory '
     'where event and checkpoint files will be written.')
@@ -90,7 +94,7 @@ FLAGS = flags.FLAGS
 def main(unused_argv):
   flags.mark_flag_as_required('model_dir')
   flags.mark_flag_as_required('pipeline_config_path')
-  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, save_summary_steps=100, save_checkpoints_steps=1)
+  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, save_summary_steps=100, save_checkpoints_steps=1000)
 
   train_and_eval_dict = model_lib.create_estimator_and_inputs(
       run_config=config,

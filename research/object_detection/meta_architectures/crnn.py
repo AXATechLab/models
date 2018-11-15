@@ -6,6 +6,7 @@ import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
 from tf_crnn.model import deep_bidirectional_lstm, get_words_from_chars
 from tf_crnn.config import  CONST
+from tf_crnn.data_handler import padding_inputs_width
 from functools import partial
 from utils import shape_utils
 
@@ -108,7 +109,6 @@ class CRNN:
                 stage='transcription')
             normalized_gt_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
                 true_image_shapes[0, 0], true_image_shapes[0, 1])
-
             # Switch this on to train on groundtruth
             # if mode == tf.estimator.ModeKeys.TRAIN:
             #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
@@ -117,6 +117,8 @@ class CRNN:
             # Switch this on to train on groundtruth and detections
             if mode == tf.estimator.ModeKeys.TRAIN:
                 normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
+                num_detections = num_detections + normalized_gt_boxlist.num_boxes()
+
 
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
@@ -158,8 +160,8 @@ class CRNN:
             # positive_indicator = tf.Print(positive_indicator, [gt_transcriptions[0]], summarize=1000, message="Num GTs")
 
             # positive_indicator = tf.Print(positive_indicator, [positive_indicator], message="positive_indicator", summarize=99999)
-            valid_indicator = tf.logical_and(
-                tf.range(detection_boxlist.num_boxes()) < num_detections, # not needed
+            valid_indicator = tf.logical_and( # not needed since the boxes are unpadded
+                tf.range(detection_boxlist.num_boxes()) < num_detections,
                 cls_weights > 0
             )
             sampled_indices = detection_model._second_stage_sampler.subsample(
@@ -222,8 +224,9 @@ class CRNN:
         fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
           tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
         # crop_width = tf.Print(crop_width, [crop_width], message="Crop Width", summarize=9999)
-        padded_crop = tf.pad(fixed_height_crop[0],
-          [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
+        # padded_crop = tf.pad(fixed_height_crop[0],
+        #   [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
+        padded_crop, _ =  padding_inputs_width(fixed_height_crop[0], self._crop_size, 1)
         return padded_crop
 
       aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
@@ -299,6 +302,7 @@ class CRNN:
     def loss(self, predictions_dict, sparse_code_target):
         # Alphabet and codes
         seq_len_inputs = predictions_dict['seq_len_inputs']
+        seq_len_inputs = tf.Print(seq_len_inputs, [tf.shape(seq_len_inputs)], message="seq_len_inputs", summarize=99999)
         # Loss
         # ----
         # >>> Cannot have longer labels than predictions -> error
