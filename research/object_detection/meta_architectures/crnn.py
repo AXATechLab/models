@@ -115,9 +115,9 @@ class CRNN:
             #         true_image_shapes[0, 0], true_image_shapes[0, 1])
 
             # Switch this on to train on groundtruth and detections
-            if mode == tf.estimator.ModeKeys.TRAIN:
-                normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
-                num_detections = num_detections + normalized_gt_boxlist.num_boxes()
+            # if mode == tf.estimator.ModeKeys.TRAIN:
+            #     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
+            #     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
 
 
         template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
@@ -302,7 +302,7 @@ class CRNN:
     def loss(self, predictions_dict, sparse_code_target):
         # Alphabet and codes
         seq_len_inputs = predictions_dict['seq_len_inputs']
-        seq_len_inputs = tf.Print(seq_len_inputs, [tf.shape(seq_len_inputs)], message="seq_len_inputs", summarize=99999)
+        # seq_len_inputs = tf.Print(seq_len_inputs, [tf.shape(seq_len_inputs)], message="seq_len_inputs", summarize=99999)
         # Loss
         # ----
         # >>> Cannot have longer labels than predictions -> error
