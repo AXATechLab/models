@@ -209,6 +209,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       An `EstimatorSpec` that encapsulates the model and its serving
         configurations.
     """
+
     params = params or {}
     total_loss, train_op, final_response, export_outputs, transcription_eval_ops = None, None, None, None, {}
     transcription_loss = 0

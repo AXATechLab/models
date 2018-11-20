@@ -139,6 +139,8 @@ class BoxListFields(object):
     boxes: bounding box coordinates.
     classes: classes per bounding box.
     scores: scores per bounding box.
+    transcription: predicted transcriptions
+    groundtruth_transcription: target text
     weights: sample weights per bounding box.
     objectness: objectness score per bounding box.
     masks: masks per bounding box.
