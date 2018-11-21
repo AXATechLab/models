@@ -474,5 +474,5 @@ def profile_inference_graph(graph):
       graph,
       tfprof_options=tfprof_flops_option)
 
-  tf.profiler.profile(graph, None, None, cmd, options)
+  # tf.profiler.profile(graph, None, None, cmd, options)
 
