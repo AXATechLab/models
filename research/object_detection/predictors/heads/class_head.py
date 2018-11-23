@@ -196,10 +196,10 @@ class ConvolutionalClassHead(head.Head):
     if batch_size is None:
       batch_size = tf.shape(features)[0]
     fields = self._template_fields
-    if fields is None:
+    if True: #fields is None:
       class_predictions_with_background = tf.reshape(
           class_predictions_with_background, [batch_size, -1, num_class_slots])
-    else:      
+    else:
       #TODO: Do this computation once for the two heads
       # @Michele code to restrict RPN predictions to template fields
       def batch_field_prediction(field, feature_map, num_class_slots):
@@ -209,9 +209,9 @@ class ConvolutionalClassHead(head.Head):
         #field_map = tf.Print(field_map, [tf.shape(field_map)])
         return tf.reshape(field_map, [-1, num_class_slots])
 
-      field_prediction = partial(batch_field_prediction, feature_map=class_predictions_with_background[0], 
+      field_prediction = partial(batch_field_prediction, feature_map=class_predictions_with_background[0],
         num_class_slots=num_class_slots)
-      anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields, 
+      anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields,
         dtype=tf.float32, as_list=True)
       class_predictions_with_background = tf.reshape(tf.concat(anchor_list, axis=0), [1, -1, num_class_slots])
     #class_predictions_with_background = tf.Print(class_predictions_with_background, [tf.shape(class_predictions_with_background)], message="Class predictions shape ")
