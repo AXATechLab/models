@@ -29,6 +29,7 @@ import tensorflow as tf
 from object_detection.meta_architectures import faster_rcnn_meta_arch
 from nets import resnet_utils
 from nets import resnet_v1
+from functools import partial
 
 slim = tf.contrib.slim
 
@@ -59,8 +60,8 @@ class FasterRCNNResnetV1FeatureExtractor(
     Raises:
       ValueError: If `first_stage_features_stride` is not 8 or 16.
     """
-    if first_stage_features_stride != 8 and first_stage_features_stride != 16:
-      raise ValueError('`first_stage_features_stride` must be 8 or 16.')
+    if first_stage_features_stride != 8 and first_stage_features_stride != 16 and first_stage_features_stride != 32:
+      raise ValueError('`first_stage_features_stride` must be 8 or 16 (or 32 for text).')
     self._architecture = architecture
     self._resnet_model = resnet_model
     super(FasterRCNNResnetV1FeatureExtractor, self).__init__(
@@ -224,6 +225,34 @@ class FasterRCNNResnet101FeatureExtractor(FasterRCNNResnetV1FeatureExtractor):
         first_stage_features_stride, batch_norm_trainable,
         reuse_weights, weight_decay)
 
+
+class FasterRCNNResnet101TextFeatureExtractor(FasterRCNNResnetV1FeatureExtractor):
+  """Faster R-CNN Resnet 101 feature extractor implementation."""
+
+  def __init__(self,
+               is_training,
+               first_stage_features_stride,
+               batch_norm_trainable=False,
+               reuse_weights=None,
+               weight_decay=0.0):
+    """Constructor.
+
+    Args:
+      is_training: See base class.
+      first_stage_features_stride: See base class.
+      batch_norm_trainable: See base class.
+      reuse_weights: See base class.
+      weight_decay: See base class.
+
+    Raises:
+      ValueError: If `first_stage_features_stride` is not 8 or 16,
+        or if `architecture` is not supported.
+    """
+    resnet_model = partial(resnet_v1.resnet_v1_101, on_text=True)
+    super(FasterRCNNResnet101TextFeatureExtractor, self).__init__(
+        'resnet_v1_101', resnet_model, is_training,
+        first_stage_features_stride, batch_norm_trainable,
+        reuse_weights, weight_decay)
 
 class FasterRCNNResnet152FeatureExtractor(FasterRCNNResnetV1FeatureExtractor):
   """Faster R-CNN Resnet 152 feature extractor implementation."""

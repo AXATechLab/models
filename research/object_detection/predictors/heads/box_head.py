@@ -185,7 +185,7 @@ class ConvolutionalBoxHead(head.Head):
     if batch_size is None:
       batch_size = tf.shape(features)[0]
     fields = self._template_fields
-    if fields is None:
+    if True: #fields is None:
       # @Michele there's no area restriction (original architecture)
       box_encodings = tf.reshape(box_encodings,
                                [batch_size, -1, 1, self._box_code_size])
@@ -194,7 +194,7 @@ class ConvolutionalBoxHead(head.Head):
       def batch_field_prediction(field, feature_map):
         y_min, x_min, y_max, x_max = tf.split(field, 4)
         # field_map = tf.slice(feature_map, [y_min, x_min, tf.constant([0])], [y_max - y_min + 1, x_max - x_min + 1, -1])
-        #self.debug_area += (y_max[0] - y_min[0] + 1) * (x_max[0] - x_min[0] + 1) 
+        #self.debug_area += (y_max[0] - y_min[0] + 1) * (x_max[0] - x_min[0] + 1)
         field_map = feature_map[y_min[0]:(y_max[0] + 1), x_min[0]:(x_max[0] + 1), :]
         return tf.reshape(field_map, [-1, self._box_code_size])
       field_prediction = partial(batch_field_prediction, feature_map=box_encodings[0])

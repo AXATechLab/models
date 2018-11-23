@@ -149,7 +149,8 @@ def resnet_v1(inputs,
               spatial_squeeze=True,
               store_non_strided_activations=False,
               reuse=None,
-              scope=None):
+              scope=None,
+              on_text=False):
   """Generator for v1 ResNet models.
 
   This function generates a family of ResNet v1 models. See the resnet_v1_*()
@@ -234,7 +235,8 @@ def resnet_v1(inputs,
           net = resnet_utils.conv2d_same(net, 64, 7, stride=2, scope='conv1')
           net = slim.max_pool2d(net, [3, 3], stride=2, scope='pool1')
         net = resnet_utils.stack_blocks_dense(net, blocks, output_stride,
-                                              store_non_strided_activations)
+                                              store_non_strided_activations,
+                                              on_text=on_text)
         # Convert end_points_collection into a dictionary of end_points.
         end_points = slim.utils.convert_collection_to_dict(
             end_points_collection)
@@ -311,13 +313,37 @@ def resnet_v1_101(inputs,
                   spatial_squeeze=True,
                   store_non_strided_activations=False,
                   reuse=None,
-                  scope='resnet_v1_101'):
+                  scope='resnet_v1_101',
+                  on_text=False):
   """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
   blocks = [
       resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
       resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
       resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
       resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
+  ]
+  return resnet_v1(inputs, blocks, num_classes, is_training,
+                   global_pool=global_pool, output_stride=output_stride,
+                   include_root_block=True, spatial_squeeze=spatial_squeeze,
+                   store_non_strided_activations=store_non_strided_activations,
+                   reuse=reuse, scope=scope, on_text=on_text)
+resnet_v1_101.default_image_size = resnet_v1.default_image_size
+
+def resnet_v1_101_text(inputs,
+                  num_classes=None,
+                  is_training=True,
+                  global_pool=True,
+                  output_stride=None,
+                  spatial_squeeze=True,
+                  store_non_strided_activations=False,
+                  reuse=None,
+                  scope='resnet_v1_101_text'):
+  """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
+  blocks = [
+      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
+      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
+      resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
+      resnet_v1_block('block4', base_depth=512, num_units=3, stride=2),
   ]
   return resnet_v1(inputs, blocks, num_classes, is_training,
                    global_pool=global_pool, output_stride=output_stride,

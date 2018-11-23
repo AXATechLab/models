@@ -119,9 +119,9 @@ class CRNN:
             #     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
 
 
-        template_boxlist = box_list.BoxList(tf.constant(detection_model.template_proposals, dtype=tf.float32))
+        template_boxlist = box_list.BoxList(detection_model.curr_template_boxes)
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
-        template_corpora = tf.constant(detection_model.template_corpora, dtype=tf.int32)
+        template_corpora = detection_model.curr_template_corpora
         padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
         # Filter out false positives, TODO: move in EVAL
         # positive_indicator = match.matched_column_indicator()

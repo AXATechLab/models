@@ -402,10 +402,23 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
 
     # Michele: Proposals that override the RPN
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
-    xml_root = data_util.read_xml_batch(first_stage_proposals_path)[0]['annot']
-    _, _, annotations = data_util.xml_to_numpy(None, xml_root, normalize=True)
-    self.template_proposals = annotations['gt_boxes']
-    self.template_corpora = annotations['gt_corpora']
+    template_proposals, template_corpora, num_template_proposals = [], [], []
+    def template_func(img, root, name, folder):
+      _, _, annotations = data_util.xml_to_numpy(None, root, normalize=True)
+      template_proposals.append(tf.constant(annotations['gt_boxes'], dtype=tf.float32))
+      template_corpora.append(tf.constant(annotations['gt_corpora'], dtype=tf.int32))
+      num_template_proposals.append(annotations['gt_boxes'].shape[0])
+    data_util.read_xml_batch_and_apply_fn(first_stage_proposals_path, template_func)
+    self.num_template_proposals = tf.constant(num_template_proposals, dtype=tf.int32)
+    max_len = tf.reduce_max(num_template_proposals, axis=0)
+    self.template_proposals = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]], [0, 0]]),
+      template_proposals)))
+    self.template_corpora = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]]]),
+     template_corpora)))
+
+    # _, _, annotations = data_util.xml_to_numpy(None, xml_roots[i]['annot'], normalize=True)
+    # self.template_proposals = annotations['gt_boxes']
+    # self.template_corpora = annotations['gt_corpora']
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn
@@ -1014,24 +1027,24 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
       anchors.add_field(fields.BoxListFields.corpus, tf.fill([anchors.num_boxes()], corpus))
       return anchors
 
-    template_boxes = tf.expand_dims(tf.constant(self.template_proposals, dtype=tf.float32), axis=0)
-    template_corpora = tf.constant(self.template_corpora, dtype=tf.float32)
+    tid = tf.cast(tf.mod(tf.train.get_or_create_global_step(),
+      tf.cast(tf.shape(self.template_proposals)[0], dtype=tf.int64)), dtype=tf.int32)
+    num_temp_props = self.num_template_proposals[tid]
+    padded_template_boxes = self.template_proposals[tid]
+    self.curr_template_corpora = self.template_corpora[tid, :num_temp_props]
+    self.curr_template_boxes = padded_template_boxes[:num_temp_props]
+    template_boxes = tf.expand_dims(tf.constant([[0.0, 0.0, 1.0, 1.0]]), axis=0)
+    # template_boxes = tf.expand_dims(self.curr_template_boxes, axis=0)
+    template_corpora = tf.constant([0.0])
 
-    #template_boxes = tf.Print(template_boxes, [anchors.num_boxes()], message=("Num of Anchors before "))
     batch_shape = tf.expand_dims(feature_map_shape, axis=0) # Remove this outer layer
-    template_boxes = tf.cast(tf.squeeze(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
-      to_absolute_boxes, elems=[template_boxes, batch_shape], dtype=tf.float32)), dtype=tf.int32)
-    #anchors = box_list.BoxList(tf.placeholder(shape=(0, 4), dtype=tf.float32))
+    template_boxes = tf.cast(shape_utils.static_or_dynamic_map_fn( # Remove the squeeze
+      to_absolute_boxes, elems=[template_boxes, batch_shape], dtype=tf.float32)[0], dtype=tf.int32)
 
-    #part_gen_field_anchors = partial(gen_field_anchors, anchors=anchors)
     field_anchors_list = shape_utils.static_or_dynamic_map_fn(
-      gen_field_anchors, elems=[template_boxes, template_corpora] , dtype=tf.float32, as_list=True)
+      gen_field_anchors, elems=[template_boxes, template_corpora], dtype=tf.float32, as_list=True)
     boxlists = list(map(tensors_to_boxlists, field_anchors_list))
     anchors = box_list_ops.concatenate(boxlists)
-    #anchors.set(tf.Print(anchors.get(), [anchors.num_boxes()], message=("Num of anchors ")))
-    #box_list_ops.visualize_boxes_in_image(preprocessed_inputs[0],
-    #  box_list_ops.to_normalized_coordinates(anchors, feature_image_shape[1], feature_image_shape[2]),
-    #  normalized=True)
 
     with slim.arg_scope(self._first_stage_box_predictor_arg_scope_fn()):
       kernel_size = self._first_stage_box_predictor_kernel_size

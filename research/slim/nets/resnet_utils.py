@@ -125,7 +125,8 @@ def conv2d_same(inputs, num_outputs, kernel_size, stride, rate=1, scope=None):
 @slim.add_arg_scope
 def stack_blocks_dense(net, blocks, output_stride=None,
                        store_non_strided_activations=False,
-                       outputs_collections=None):
+                       outputs_collections=None,
+                       on_text=False):
   """Stacks ResNet `Blocks` and controls output feature density.
 
   First, this function creates scopes for the ResNet in the form of
@@ -178,7 +179,7 @@ def stack_blocks_dense(net, blocks, output_stride=None,
   # The atrous convolution rate parameter.
   rate = 1
 
-  for block in blocks:
+  for j, block in enumerate(blocks):
     with tf.variable_scope(block.scope, 'block', [net]) as sc:
       block_stride = 1
       for i, unit in enumerate(block.args):
@@ -194,10 +195,12 @@ def stack_blocks_dense(net, blocks, output_stride=None,
           if output_stride is not None and current_stride == output_stride:
             net = block.unit_fn(net, rate=rate, **dict(unit, stride=1))
             rate *= unit.get('stride', 1)
-
           else:
+            unit_stride = unit.get('stride', 1)
+            if on_text: # and j > 0
+              unit = dict(unit, stride=[unit_stride, 1])
             net = block.unit_fn(net, rate=1, **unit)
-            current_stride *= unit.get('stride', 1)
+            current_stride *= unit_stride
             if output_stride is not None and current_stride > output_stride:
               raise ValueError('The target output_stride cannot be reached.')
 
