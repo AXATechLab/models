@@ -85,7 +85,7 @@ class CRNN:
             prediction_dict['class_predictions_with_background'],
             prediction_dict['proposal_boxes'],
             prediction_dict['num_proposals'],
-            prediction_dict['proposal_corpora'],
+            #prediction_dict['proposal_corpora'],
             true_image_shapes)
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections][0], tf.int32)
@@ -96,6 +96,7 @@ class CRNN:
             fields.DetectionResultFields.detection_scores][0][:num_detections]
         # detection_corpora = detections_dict[
         #     fields.DetectionResultFields.detection_corpora][0]
+        detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant(0, dtype=tf.int32) # Unused
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
