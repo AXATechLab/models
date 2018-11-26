@@ -663,7 +663,7 @@ def visualize_boxes_and_labels_on_image_array(
             display_str = '{}%'.format(int(100*scores[i]))
           else:
             if transcription_scores is not None:
-              display_str = '{}: detection {}%, transcription {}%'.format(display_str, int(100*scores[i]),
+              display_str = '{}: Dt {}%, Tr {}%'.format(display_str, int(100*scores[i]),
                 int(100*transcription_scores[i]))
             else:
               display_str = '{}: {}%'.format(display_str, int(100*scores[i]))

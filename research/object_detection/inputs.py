@@ -229,6 +229,7 @@ def pad_input_data_to_static_shapes(tensor_dict, max_num_boxes, num_classes,
       ],
       fields.InputDataFields.groundtruth_image_classes: [num_classes],
       fields.InputDataFields.groundtruth_image_confidences: [num_classes],
+      fields.InputDataFields.template_id: []
   }
 
   if fields.InputDataFields.original_image in tensor_dict:
@@ -369,6 +370,8 @@ def _get_features_dict(input_dict):
       HASH_KEY: tf.cast(hash_from_source_id, tf.int32),
       fields.InputDataFields.true_image_shape:
           input_dict[fields.InputDataFields.true_image_shape],
+      fields.InputDataFields.template_id:
+          input_dict[fields.InputDataFields.template_id],
       fields.InputDataFields.original_image_spatial_shape:
           input_dict[fields.InputDataFields.original_image_spatial_shape]
   }

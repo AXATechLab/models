@@ -99,6 +99,7 @@ class InputDataFields(object):
   is_annotated = 'is_annotated'
   true_image_shape = 'true_image_shape'
   multiclass_scores = 'multiclass_scores'
+  template_id = 'template_id'
 
 
 class TranscriptionResultFields(object):

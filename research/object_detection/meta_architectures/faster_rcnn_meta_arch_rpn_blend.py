@@ -593,7 +593,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                                         clip_heights, clip_widths], axis=1))
     return clip_window
 
-  def predict(self, preprocessed_inputs, true_image_shapes):
+  def predict(self, preprocessed_inputs, true_image_shapes, template_ids=0):
     """Predicts unpostprocessed tensors from input tensor.
 
     This function takes an input batch of images and runs it through the
@@ -669,10 +669,19 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     Raises:
       ValueError: If `predict` is called before `preprocess`.
     """
+
     (rpn_box_predictor_features, rpn_features_to_crop, anchors_boxlist,
      image_shape) = self._extract_rpn_feature_maps(preprocessed_inputs)
     (rpn_box_encodings, rpn_objectness_predictions_with_background
     ) = self._predict_rpn_proposals(rpn_box_predictor_features)
+
+    # tid = tf.cast(tf.mod(tf.train.get_or_create_global_step(),
+    #   tf.cast(tf.shape(self.template_proposals)[0], dtype=tf.int64)), dtype=tf.int32)
+    tid = tf.cast(template_ids, dtype=tf.int32)[0]
+    num_temp_props = self.num_template_proposals[tid]
+    padded_template_boxes = self.template_proposals[tid]
+    self.curr_template_corpora = self.template_corpora[tid, :num_temp_props]
+    self.curr_template_boxes = padded_template_boxes[:num_temp_props]
 
     # The Faster R-CNN paper recommends pruning anchors that venture outside
     # the image window at training time and clipping at inference time.
@@ -1008,13 +1017,6 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     anchors = box_list_ops.concatenate(
         self._first_stage_anchor_generator.generate([(feature_map_shape[1],
                                                       feature_map_shape[2])]))
-   # anchors.set(tf.Print(anchors.get(), [feature_map_shape], message="Anchors ", summarize=9999))
-    tid = tf.cast(tf.mod(tf.train.get_or_create_global_step(),
-      tf.cast(tf.shape(self.template_proposals)[0], dtype=tf.int64)), dtype=tf.int32)
-    num_temp_props = self.num_template_proposals[tid]
-    padded_template_boxes = self.template_proposals[tid]
-    self.curr_template_corpora = self.template_corpora[tid, :num_temp_props]
-    self.curr_template_boxes = padded_template_boxes[:num_temp_props]
 
     #anchors.set(tf.Print(anchors.get(), [anchors.get()], message="Anchors ", summarize=9999))
 
