@@ -36,6 +36,7 @@ class CRNN:
         self.zero_loss = tf.constant(0, dtype=tf.float32)
         self.NULL = '?'
 
+
         self.no_eval_op = {
             'eval/precision' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
             'eval/recall' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
@@ -271,7 +272,9 @@ class CRNN:
         with tf.name_scope('str2code_conversion'):
             table_str2int = self.table_str2int
             splitted = tf.string_split(labels, delimiter='')
-            values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64)
+            # values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64) # Why the squeeze? it causes a bug
+            values_int = tf.reshape(tf.cast(tf.decode_raw(splitted.values, tf.uint8), tf.int64), [-1])
+            # values_int = tf.Print(values_int, [tf.shape(splitted.values)], message="splitted.values", summarize=9999)
             codes = table_str2int.lookup(values_int)
             codes = tf.cast(codes, tf.int32)
             return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
@@ -361,15 +364,22 @@ class CRNN:
             sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
             # Compute CER on non-empty vectors
             sampled_matched_transcriptions = tf.cond(tf.shape(sampled_matched_transcriptions)[0] < 1,
-                lambda: tf.constant(['$EOF'], dtype=tf.string),
+                lambda: tf.constant([self.NULL], dtype=tf.string),
                 lambda: sampled_matched_transcriptions)
             sampled_matched_predictions = tf.cond(tf.shape(sampled_matched_predictions)[0] < 1,
-                lambda: tf.constant(['$EOF'], dtype=tf.string),
+                lambda: tf.constant([self.NULL], dtype=tf.string),
                 lambda: sampled_matched_predictions)
+            # sampled_matched_transcriptions = tf.Print(sampled_matched_transcriptions, [tf.shape(sampled_matched_transcriptions)], message="sampled_matched_transcriptions", summarize=9999)
+            # sampled_matched_predictions = tf.Print(sampled_matched_predictions, [tf.shape(sampled_matched_predictions)], message="sampled_matched_predictions", summarize=9999)
+
             # sampled_matched_transcriptions = tf.boolean_mask(matched_transcriptions, dt_positive_indices)
             # sampled_matched_predictions = tf.boolean_mask(all_predictions, dt_positive_indices)
             sparse_code_target = self.str2code(sampled_matched_transcriptions)
             sparse_code_pred = self.str2code(sampled_matched_predictions)
+            db0 = [sparse_code_pred.indices, sparse_code_pred.values, sparse_code_pred.dense_shape]
+            db = [sparse_code_target.indices, sparse_code_target.values, sparse_code_target.dense_shape]
+            # sparse_code_target = tf.SparseTensor(db[0], db[1],
+            #     tf.Print(db[2], db + db0 + [sampled_matched_predictions], message="sparse_code_target", summarize=99999))
             CER, CER_op = tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
                  tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
 
