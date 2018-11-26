@@ -57,8 +57,8 @@ class CRNN:
             'labels': tf.constant('', dtype=tf.string),
             'seq_len_inputs': 0,
             'prob': tf.constant([[0], [0]], dtype=tf.float32),
-            fields.TranscriptionResultFields.score: tf.constant(0, dtype=tf.float32),
-            fields.TranscriptionResultFields.words: tf.constant('', dtype=tf.string)
+            fields.TranscriptionResultFields.score: tf.constant([[0]], dtype=tf.float32),
+            fields.TranscriptionResultFields.words: tf.constant([['']], dtype=tf.string)
         }
         transcriptions_dict.update(detections_dict)
         return [self.zero_loss, transcriptions_dict]
@@ -78,7 +78,6 @@ class CRNN:
                 predict_fn, name="StepCond")
 
     def _predict(self, prediction_dict, true_image_shapes, mode):
-        # Postprocess FasterRCNN stage 2
         detection_model = self.detection_model
         detections_dict = detection_model._postprocess_box_classifier(
             prediction_dict['refined_box_encodings'],
@@ -107,8 +106,12 @@ class CRNN:
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
                 stage='transcription')
-            normalized_gt_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
-                true_image_shapes[0, 0], true_image_shapes[0, 1])
+            normalized_gt_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
+            normalize_gt = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+                true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
+            # Guard for examples with no objects to detect (box_list_ops throws an exception)
+            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt,
+                lambda: gt_boxlists[0].get()))
             # Switch this on to train on groundtruth
             # if mode == tf.estimator.ModeKeys.TRAIN:
             #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
@@ -189,11 +192,13 @@ class CRNN:
                 return [self.zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
+                # Check that at least one detection matches groundtruth
                 loss, predictions_dict = tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0),
                     lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
                 eval_metric_ops = self.no_eval_op
             else:
-                loss, predictions_dict = tf.cond(tf.constant(False, dtype=tf.bool),
+                # Check that there is at least one detection (there might be none due to nms)
+                loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0), #tf.constant(False, dtype=tf.bool),
                     lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
                 eval_metric_ops = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
                     normalized_gt_boxlist, gt_transcriptions[0])
@@ -231,8 +236,8 @@ class CRNN:
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
         detection_scores, detection_corpora, num_detections, mode):
-        # Reuse the second stage cropping as-is
         detection_model = self.detection_model
+        # detection_boxes = tf.Print(detection_boxes, [detection_boxes], summarize=9999, message="detection_boxes")
         if not self._backprop_detection:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
@@ -341,7 +346,10 @@ class CRNN:
             detection_boxlist = box_list.BoxList(predictions_dict[fields.DetectionResultFields.detection_boxes][0])
             (_, _, _, _, match) = self.target_assigner.assign(gt_boxlist, detection_boxlist)
             padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
+
+            # padded_best_predictions = tf.Print(padded_best_predictions, [padded_best_predictions], message="padded_best_predictions", summarize=9999)
             unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
+            # unpadded_gt_transcriptions = tf.Print(unpadded_gt_transcriptions, [unpadded_gt_transcriptions], message="unpadded_gt_transcriptions", summarize=9999)
             target_words = encode_groundtruth(unpadded_gt_transcriptions)
             # target_words = print_string_tensor(target_words, padded_best_predictions, "recall")
             recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
@@ -351,6 +359,13 @@ class CRNN:
             indicator = match.matched_column_indicator()
             sampled_matched_transcriptions = tf.boolean_mask(unpadded_gt_transcriptions, indicator)
             sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
+            # Compute CER on non-empty vectors
+            sampled_matched_transcriptions = tf.cond(tf.shape(sampled_matched_transcriptions)[0] < 1,
+                lambda: tf.constant(['$EOF'], dtype=tf.string),
+                lambda: sampled_matched_transcriptions)
+            sampled_matched_predictions = tf.cond(tf.shape(sampled_matched_predictions)[0] < 1,
+                lambda: tf.constant(['$EOF'], dtype=tf.string),
+                lambda: sampled_matched_predictions)
             # sampled_matched_transcriptions = tf.boolean_mask(matched_transcriptions, dt_positive_indices)
             # sampled_matched_predictions = tf.boolean_mask(all_predictions, dt_positive_indices)
             sparse_code_target = self.str2code(sampled_matched_transcriptions)
