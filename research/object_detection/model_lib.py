@@ -440,6 +440,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           eval_images[0:1],
           features[inputs.HASH_KEY][0],
           features[fields.InputDataFields.template_id][0],
+          detection_model.curr_template_boxes,
           final_response,
           groundtruth,
           class_agnostic=class_agnostic,

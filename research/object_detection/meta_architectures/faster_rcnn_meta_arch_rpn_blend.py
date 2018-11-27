@@ -406,19 +406,27 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     # Michele: Proposals that override the RPN
     print("Original architecture with templates")
     first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
-    template_proposals, template_corpora, num_template_proposals = [], [], []
+    template_proposals, template_corpora, tids = [], [], []
     def template_func(img, root, name, folder):
       _, _, annotations = data_util.xml_to_numpy(None, root, normalize=True)
+      tids.append(int(root.xpath("./template_id")[0].text))
       template_proposals.append(tf.constant(annotations['gt_boxes'], dtype=tf.float32))
       template_corpora.append(tf.constant(annotations['gt_corpora'], dtype=tf.int32))
-      num_template_proposals.append(annotations['gt_boxes'].shape[0])
     data_util.read_xml_batch_and_apply_fn(first_stage_proposals_path, template_func)
-    self.num_template_proposals = tf.constant(num_template_proposals, dtype=tf.int32)
-    max_len = tf.reduce_max(num_template_proposals, axis=0)
+    # Sort
+    sorted_templates = sorted(zip(tids, template_proposals, template_corpora), key=lambda x: x[0])
+    sorted_template_proposals, sorted_template_corpora = [], []
+    for (tid, proposals, corpus) in sorted_templates:
+      sorted_template_proposals.append(proposals)
+      sorted_template_corpora.append(corpus)
+    # Pad
+    self.num_template_proposals = tf.constant([x.shape[0] for x in sorted_template_proposals], dtype=tf.int32)
+    max_len = tf.reduce_max(self.num_template_proposals, axis=0)
     self.template_proposals = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]], [0, 0]]),
-      template_proposals)))
+      sorted_template_proposals)))
     self.template_corpora = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]]]),
-     template_corpora)))
+     sorted_template_corpora)))
+
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn

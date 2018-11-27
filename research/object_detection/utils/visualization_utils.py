@@ -269,19 +269,22 @@ def draw_bounding_boxes_on_image(image,
 
 
 
-def _visualize_boxes(image, boxes, classes, scores, corpora, transcriptions, transcription_scores, category_index, **kwargs):
+def _visualize_boxes(image, boxes, classes, scores, corpora, tid, template_boxes, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
-      image, boxes, classes, scores, category_index=category_index,
+      image, boxes, classes, scores, tid,
+      template_boxes, corpora=corpora, category_index=category_index,
       transcriptions=transcriptions, transcription_scores=transcription_scores, **kwargs)
 
 
-def _visualize_boxes_and_masks(image, boxes, classes, scores, corpora, masks, transcriptions, transcription_scores,
+def _visualize_boxes_and_masks(image, boxes, classes, scores, corpora, tid, template_boxes, masks, transcriptions, transcription_scores,
                                category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
       classes,
       scores,
+      tid,
+      template_boxes,
       category_index=category_index,
       instance_masks=masks,
       transcriptions=transcriptions,
@@ -290,13 +293,15 @@ def _visualize_boxes_and_masks(image, boxes, classes, scores, corpora, masks, tr
       **kwargs)
 
 
-def _visualize_boxes_and_keypoints(image, boxes, classes, scores, corpora, keypoints, transcriptions, transcription_scores,
+def _visualize_boxes_and_keypoints(image, boxes, classes, scores, corpora, tid, template_boxes, keypoints, transcriptions, transcription_scores,
                                    category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
       classes,
       scores,
+      tid,
+      template_boxes,
       category_index=category_index,
       keypoints=keypoints,
       transcriptions=transcriptions,
@@ -306,12 +311,14 @@ def _visualize_boxes_and_keypoints(image, boxes, classes, scores, corpora, keypo
 
 
 def _visualize_boxes_and_masks_and_keypoints(
-    image, boxes, classes, scores, corpora, masks, keypoints, transcriptions, transcription_scores, category_index, **kwargs):
+    image, boxes, classes, scores, corpora, tid, template_boxes, masks, keypoints, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
       classes,
       scores,
+      tid,
+      template_boxes,
       category_index=category_index,
       instance_masks=masks,
       keypoints=keypoints,
@@ -326,6 +333,8 @@ def draw_bounding_boxes_on_image_tensors(images,
                                          classes,
                                          scores,
                                          corpora,
+                                         tid,
+                                         template_boxes,
                                          category_index,
                                          transcriptions=None,
                                          transcription_scores=None,
@@ -333,7 +342,8 @@ def draw_bounding_boxes_on_image_tensors(images,
                                          keypoints=None,
                                          max_boxes_to_draw=20,
                                          min_score_thresh=0.2,
-                                         use_normalized_coordinates=True):
+                                         use_normalized_coordinates=True,
+):
   """Draws bounding boxes, masks, and keypoints on batch of image tensors.
 
   Args:
@@ -373,26 +383,25 @@ def draw_bounding_boxes_on_image_tensors(images,
         _visualize_boxes_and_masks,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, corpora, instance_masks]
+    elems = [images, boxes, classes, scores, corpora, tid, template_boxes, instance_masks]
   elif instance_masks is None and keypoints is not None:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes_and_keypoints,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, corpora, keypoints]
+    elems = [images, boxes, classes, scores, corpora, tid, template_boxes, keypoints]
   elif instance_masks is not None and keypoints is not None:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes_and_masks_and_keypoints,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, corpora, instance_masks, keypoints]
+    elems = [images, boxes, classes, scores, corpora, tid, template_boxes, instance_masks, keypoints]
   else:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, corpora]
-
+    elems = [images, boxes, classes, scores, corpora, tid, template_boxes]
   if transcriptions is not None:
     elems.append(transcriptions)
     elems.append(transcription_scores)
@@ -457,12 +466,20 @@ def draw_side_by_side_evaluation_image(eval_dict,
       input_data_fields.groundtruth_transcription], axis=0)
     scores = tf.expand_dims(eval_dict[transcription_fields.score], axis=0)
 
+  gt_placeholder = tf.expand_dims(
+          tf.ones_like(
+              eval_dict[input_data_fields.groundtruth_classes],
+              dtype=tf.float32),
+          axis=0)
+
   images_with_detections = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
       tf.expand_dims(eval_dict[detection_fields.detection_boxes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_classes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_corpora], axis=0),
+      tf.expand_dims(eval_dict[input_data_fields.template_id], axis=0),
+      tf.expand_dims(eval_dict['template_boxes'], axis=0),
       category_index,
       transcriptions=transcriptions,
       transcription_scores=scores,
@@ -470,17 +487,15 @@ def draw_side_by_side_evaluation_image(eval_dict,
       keypoints=keypoints,
       max_boxes_to_draw=max_boxes_to_draw,
       min_score_thresh=min_score_thresh,
-      use_normalized_coordinates=use_normalized_coordinates)
+      use_normalized_coordinates=use_normalized_coordinates,)
   images_with_groundtruth = draw_bounding_boxes_on_image_tensors(
       eval_dict[input_data_fields.original_image],
       tf.expand_dims(eval_dict[input_data_fields.groundtruth_boxes], axis=0),
       tf.expand_dims(eval_dict[input_data_fields.groundtruth_classes], axis=0),
-      tf.expand_dims(
-          tf.ones_like(
-              eval_dict[input_data_fields.groundtruth_classes],
-              dtype=tf.float32),
-          axis=0),
-      tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
+      gt_placeholder,
+      gt_placeholder,
+      tf.constant([[-1]], dtype=tf.int64),
+      tf.expand_dims(eval_dict['template_boxes'], axis=0),
       category_index,
       transcriptions=groundtruth_transcriptions,
       transcription_scores=tf.ones(tf.shape(groundtruth_transcriptions), dtype=tf.float32),
@@ -488,7 +503,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
       keypoints=None,
       max_boxes_to_draw=None,
       min_score_thresh=0.0,
-      use_normalized_coordinates=use_normalized_coordinates)
+      use_normalized_coordinates=use_normalized_coordinates,)
   return tf.concat([images_with_detections, images_with_groundtruth], axis=2)
 
 
@@ -579,6 +594,8 @@ def visualize_boxes_and_labels_on_image_array(
     boxes,
     classes,
     scores,
+    tid,
+    template_boxes,
     category_index,
     transcriptions=None,
     transcription_scores=None,
@@ -593,7 +610,7 @@ def visualize_boxes_and_labels_on_image_array(
     line_thickness=4,
     groundtruth_box_visualization_color='black',
     skip_scores=False,
-    skip_labels=False):
+    skip_labels=False,):
   """Overlay labeled boxes on an image with formatted scores and label names.
 
   This function groups boxes that correspond to the same location
@@ -636,6 +653,21 @@ def visualize_boxes_and_labels_on_image_array(
   """
   # Create a display string (and color) for every box location, group any boxes
   # that correspond to the same location.
+
+  if template_boxes is not None:
+    for i in range(template_boxes.shape[0]):
+      ymin, xmin, ymax, xmax = template_boxes[i]
+      draw_bounding_box_on_image_array(
+        image,
+        ymin,
+        xmin,
+        ymax,
+        xmax,
+        color='red',
+        thickness=line_thickness,
+        display_str_list=str(tid),
+        use_normalized_coordinates=use_normalized_coordinates)
+
   box_to_display_str_map = collections.defaultdict(list)
   box_to_color_map = collections.defaultdict(str)
   box_to_instance_masks_map = {}
@@ -670,7 +702,7 @@ def visualize_boxes_and_labels_on_image_array(
           if not display_str:
             display_str = '{}%'.format(int(100*scores[i]))
           else:
-            corpus = -1
+            corpus = -2
             if corpora is not None:
               corpus = int(corpora[i])
             if transcription_scores is not None:
