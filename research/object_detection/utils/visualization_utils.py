@@ -269,13 +269,13 @@ def draw_bounding_boxes_on_image(image,
 
 
 
-def _visualize_boxes(image, boxes, classes, scores, transcriptions, transcription_scores, category_index, **kwargs):
+def _visualize_boxes(image, boxes, classes, scores, corpora, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image, boxes, classes, scores, category_index=category_index,
       transcriptions=transcriptions, transcription_scores=transcription_scores, **kwargs)
 
 
-def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcriptions, transcription_scores,
+def _visualize_boxes_and_masks(image, boxes, classes, scores, corpora, masks, transcriptions, transcription_scores,
                                category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -285,10 +285,12 @@ def _visualize_boxes_and_masks(image, boxes, classes, scores, masks, transcripti
       category_index=category_index,
       instance_masks=masks,
       transcriptions=transcriptions,
+      transcription_scores=transcription_scores,
+      corpora=corpora,
       **kwargs)
 
 
-def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, transcriptions, transcription_scores,
+def _visualize_boxes_and_keypoints(image, boxes, classes, scores, corpora, keypoints, transcriptions, transcription_scores,
                                    category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
@@ -299,11 +301,12 @@ def _visualize_boxes_and_keypoints(image, boxes, classes, scores, keypoints, tra
       keypoints=keypoints,
       transcriptions=transcriptions,
       transcription_scores=transcription_scores,
+      corpora=corpora,
       **kwargs)
 
 
 def _visualize_boxes_and_masks_and_keypoints(
-    image, boxes, classes, scores, masks, keypoints, transcriptions, transcription_scores, category_index, **kwargs):
+    image, boxes, classes, scores, corpora, masks, keypoints, transcriptions, transcription_scores, category_index, **kwargs):
   return visualize_boxes_and_labels_on_image_array(
       image,
       boxes,
@@ -314,6 +317,7 @@ def _visualize_boxes_and_masks_and_keypoints(
       keypoints=keypoints,
       transcriptions=transcriptions,
       transcription_scores=transcription_scores,
+      corpora=corpora,
       **kwargs)
 
 
@@ -321,6 +325,7 @@ def draw_bounding_boxes_on_image_tensors(images,
                                          boxes,
                                          classes,
                                          scores,
+                                         corpora,
                                          category_index,
                                          transcriptions=None,
                                          transcription_scores=None,
@@ -368,25 +373,25 @@ def draw_bounding_boxes_on_image_tensors(images,
         _visualize_boxes_and_masks,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, instance_masks]
+    elems = [images, boxes, classes, scores, corpora, instance_masks]
   elif instance_masks is None and keypoints is not None:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes_and_keypoints,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, keypoints]
+    elems = [images, boxes, classes, scores, corpora, keypoints]
   elif instance_masks is not None and keypoints is not None:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes_and_masks_and_keypoints,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores, instance_masks, keypoints]
+    elems = [images, boxes, classes, scores, corpora, instance_masks, keypoints]
   else:
     visualize_boxes_fn = functools.partial(
         _visualize_boxes,
         category_index=category_index,
         **visualization_keyword_args)
-    elems = [images, boxes, classes, scores]
+    elems = [images, boxes, classes, scores, corpora]
 
   if transcriptions is not None:
     elems.append(transcriptions)
@@ -457,6 +462,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
       tf.expand_dims(eval_dict[detection_fields.detection_boxes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_classes], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
+      tf.expand_dims(eval_dict[detection_fields.detection_corpora], axis=0),
       category_index,
       transcriptions=transcriptions,
       transcription_scores=scores,
@@ -474,6 +480,7 @@ def draw_side_by_side_evaluation_image(eval_dict,
               eval_dict[input_data_fields.groundtruth_classes],
               dtype=tf.float32),
           axis=0),
+      tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
       category_index,
       transcriptions=groundtruth_transcriptions,
       transcription_scores=tf.ones(tf.shape(groundtruth_transcriptions), dtype=tf.float32),
@@ -575,6 +582,7 @@ def visualize_boxes_and_labels_on_image_array(
     category_index,
     transcriptions=None,
     transcription_scores=None,
+    corpora=None,
     instance_masks=None,
     instance_boundaries=None,
     keypoints=None,
@@ -662,11 +670,14 @@ def visualize_boxes_and_labels_on_image_array(
           if not display_str:
             display_str = '{}%'.format(int(100*scores[i]))
           else:
+            corpus = -1
+            if corpora is not None:
+              corpus = int(corpora[i])
             if transcription_scores is not None:
-              display_str = '{}: Dt {}%, Tr {}%'.format(display_str, int(100*scores[i]),
+              display_str = '[{}] {}: Dt {}%, Tr {}%'.format(corpus, display_str, int(100*scores[i]),
                 int(100*transcription_scores[i]))
             else:
-              display_str = '{}: {}%'.format(display_str, int(100*scores[i]))
+              display_str = '[{}] {}: {}%'.format(corpus, display_str, int(100*scores[i]))
         box_to_display_str_map[box].append(display_str)
         if agnostic_mode:
           box_to_color_map[box] = 'DarkOrange'

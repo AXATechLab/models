@@ -67,6 +67,11 @@ def _image_tensor_input_placeholder(input_shape=None):
       dtype=tf.uint8, shape=input_shape, name='image_tensor')
   return input_tensor, input_tensor
 
+def _template_id_input_placeholder():
+  """Returns input placeholder and a 4-D uint8 image tensor."""
+  tid = tf.placeholder(
+      dtype=tf.int64, shape=[None], name='template_id')
+  return tid, tid
 
 def _tf_example_input_placeholder():
   """Returns input that accepts a batch of strings with tf examples.
@@ -80,7 +85,7 @@ def _tf_example_input_placeholder():
     tensor_dict = tf_example_decoder.TfExampleDecoder().decode(
         tf_example_string_tensor)
     image_tensor = tensor_dict[fields.InputDataFields.image]
-    return image_tensor
+    return image_tensor,
   return (batch_tf_example_placeholder,
           tf.map_fn(decode,
                     elems=batch_tf_example_placeholder,
@@ -118,6 +123,7 @@ input_placeholder_fn_map = {
     'encoded_image_string_tensor':
     _encoded_image_string_tensor_input_placeholder,
     'tf_example': _tf_example_input_placeholder,
+    'template_id': _template_id_input_placeholder
 }
 
 
@@ -196,6 +202,7 @@ def _add_output_tensor_nodes(postprocessed_tensors,
 def write_saved_model(saved_model_path,
                       frozen_graph_def,
                       inputs,
+                      tid_input,
                       outputs,
                       is_two_stages=False):
   """Writes SavedModel to disk.
@@ -220,7 +227,8 @@ def write_saved_model(saved_model_path,
       builder = tf.saved_model.builder.SavedModelBuilder(saved_model_path)
 
       tensor_info_inputs = {
-          'inputs': tf.saved_model.utils.build_tensor_info(inputs)}
+          'inputs': tf.saved_model.utils.build_tensor_info(inputs),
+          'tid_input': tf.saved_model.utils.build_tensor_info(tid_input)}
       tensor_info_outputs = {}
       for k, v in outputs.items():
         tensor_info_outputs[k] = tf.saved_model.utils.build_tensor_info(v)
@@ -267,11 +275,11 @@ def write_graph_and_checkpoint(inference_graph_def,
 
 
 def _get_outputs_from_inputs(input_tensors, detection_model,
-                             output_collection_name, transcription_model=None):
+                             output_collection_name, template_id, transcription_model=None):
   inputs = tf.to_float(input_tensors)
   preprocessed_inputs, true_image_shapes = detection_model.preprocess(inputs)
   output_tensors = detection_model.predict(
-      preprocessed_inputs, true_image_shapes)
+      preprocessed_inputs, true_image_shapes, template_id)
   if transcription_model:
     _, postprocessed_tensors, _ = transcription_model.predict(output_tensors, true_image_shapes,
       tf.estimator.ModeKeys.PREDICT)
@@ -295,10 +303,12 @@ def _build_detection_graph(input_type, detection_model, input_shape,
     placeholder_args['input_shape'] = input_shape
   placeholder_tensor, input_tensors = input_placeholder_fn_map[input_type](
       **placeholder_args)
+  placeholder_tid, tid = input_placeholder_fn_map['template_id']()
   outputs = _get_outputs_from_inputs(
       input_tensors=input_tensors,
       detection_model=detection_model,
       output_collection_name=output_collection_name,
+      template_id=tid,
       transcription_model=transcription_model)
 
   # Add global step to the graph.
@@ -306,7 +316,7 @@ def _build_detection_graph(input_type, detection_model, input_shape,
 
   if graph_hook_fn: graph_hook_fn()
 
-  return outputs, placeholder_tensor
+  return outputs, placeholder_tensor, placeholder_tid
 
 
 def _export_inference_graph(input_type,
@@ -327,7 +337,7 @@ def _export_inference_graph(input_type,
   saved_model_path = os.path.join(output_directory, 'saved_model')
   model_path = os.path.join(output_directory, 'model.ckpt')
 
-  outputs, placeholder_tensor = _build_detection_graph(
+  outputs, placeholder_tensor, placeholder_tid = _build_detection_graph(
       input_type=input_type,
       detection_model=detection_model,
       input_shape=input_shape,
@@ -391,7 +401,7 @@ def _export_inference_graph(input_type,
       initializer_nodes=init_nodes)
 
   write_saved_model(saved_model_path, frozen_graph_def,
-                    placeholder_tensor, outputs, is_two_stages=two_stages)
+                    placeholder_tensor, placeholder_tid, outputs, is_two_stages=two_stages)
 
 
 def export_inference_graph(input_type,

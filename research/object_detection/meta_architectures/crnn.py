@@ -96,7 +96,7 @@ class CRNN:
             fields.DetectionResultFields.detection_scores][0][:num_detections]
         # detection_corpora = detections_dict[
         #     fields.DetectionResultFields.detection_corpora][0]
-        detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant(0, dtype=tf.int32) # Unused
+        detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32) # Unused
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']

@@ -268,7 +268,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
-    preprocessed_images = tf.Print(preprocessed_images, [features[fields.InputDataFields.template_id]], message="Features", summarize=99999)
+    # preprocessed_images = tf.Print(preprocessed_images, [features[fields.InputDataFields.template_id]], message="Features", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None
     if use_tpu and train_config.use_bfloat16:
@@ -439,6 +439,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       eval_dict = eval_util.result_dict_for_single_example(
           eval_images[0:1],
           features[inputs.HASH_KEY][0],
+          features[fields.InputDataFields.template_id][0],
           final_response,
           groundtruth,
           class_agnostic=class_agnostic,

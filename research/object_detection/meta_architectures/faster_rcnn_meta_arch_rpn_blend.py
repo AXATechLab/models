@@ -593,7 +593,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
                                         clip_heights, clip_widths], axis=1))
     return clip_window
 
-  def predict(self, preprocessed_inputs, true_image_shapes, template_ids=0):
+  def predict(self, preprocessed_inputs, true_image_shapes, template_ids):
     """Predicts unpostprocessed tensors from input tensor.
 
     This function takes an input batch of images and runs it through the

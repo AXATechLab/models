@@ -482,6 +482,7 @@ def repeated_checkpoint_run(tensor_dict,
 
 def result_dict_for_single_example(image,
                                    key,
+                                   tid,
                                    detections,
                                    groundtruth=None,
                                    class_agnostic=False,
@@ -544,6 +545,7 @@ def result_dict_for_single_example(image,
   output_dict = {
       input_data_fields.original_image: image,
       input_data_fields.key: key,
+      input_data_fields.template_id: tid,
   }
 
   detection_fields = fields.DetectionResultFields
@@ -551,6 +553,7 @@ def result_dict_for_single_example(image,
   detection_boxes = detections[detection_fields.detection_boxes][0]
   image_shape = tf.shape(image)
   detection_scores = detections[detection_fields.detection_scores][0]
+  detection_corpora = detections[detection_fields.detection_corpora][0]
 
   if class_agnostic:
     detection_classes = tf.ones_like(detection_scores, dtype=tf.int64)
@@ -566,6 +569,8 @@ def result_dict_for_single_example(image,
       detection_classes, begin=[0], size=[num_detections])
   detection_scores = tf.slice(
       detection_scores, begin=[0], size=[num_detections])
+  detection_corpora = tf.slice(
+      detection_corpora, begin=[0], size=[num_detections])
 
   if scale_to_absolute:
     absolute_detection_boxlist = box_list_ops.to_absolute_coordinates(
@@ -576,6 +581,7 @@ def result_dict_for_single_example(image,
     output_dict[detection_fields.detection_boxes] = detection_boxes
   output_dict[detection_fields.detection_classes] = detection_classes
   output_dict[detection_fields.detection_scores] = detection_scores
+  output_dict[detection_fields.detection_corpora] = detection_corpora
 
   if detection_fields.detection_masks in detections:
     detection_masks = detections[detection_fields.detection_masks][0]
