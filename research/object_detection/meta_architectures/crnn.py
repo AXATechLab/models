@@ -101,7 +101,6 @@ class CRNN:
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
 
-        # Corpora assignment
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
 
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
@@ -115,8 +114,9 @@ class CRNN:
                 lambda: gt_boxlists[0].get()))
             # Switch this on to train on groundtruth
             # if mode == tf.estimator.ModeKeys.TRAIN:
-            #     normalized_boxlist = box_list_ops.to_normalized_coordinates(gt_boxlists[0],
-            #         true_image_shapes[0, 0], true_image_shapes[0, 1])
+            #     normalized_boxlist = normalized_gt_boxlist
+            #     num_detections = normalized_gt_boxlist.num_boxes()
+
 
             # Switch this on to train on groundtruth and detections
             # if mode == tf.estimator.ModeKeys.TRAIN:
@@ -150,13 +150,15 @@ class CRNN:
                 groundtruth_weights=gt_weights[0])
 
             padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL) # This list is padded with NULL
+
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
 
             positive_indicator = match.matched_column_indicator()
-            valid_indicator = tf.logical_and( # not needed since the boxes are unpadded
-                tf.range(detection_boxlist.num_boxes()) < num_detections,
-                cls_weights > 0
-            )
+            # valid_indicator = tf.logical_and( # not needed since the boxes are unpadded
+            #     tf.range(detection_boxlist.num_boxes()) < num_detections,
+            #     cls_weights > 0
+            # )
+            valid_indicator = cls_weights > 0
             sampled_indices = detection_model._second_stage_sampler.subsample(
                 valid_indicator,
                 None,
@@ -176,7 +178,6 @@ class CRNN:
                 sampled_padded_boxlist = normalized_sampled_boxlist
                 normalized_detection_boxes = sampled_padded_boxlist.get()
                 matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-                # matched_transcriptions = tf.Print(matched_transcriptions, [matched_transcriptions], message="matched_transcriptions", summarize=1000)
                 detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
                 detection_corpora = sampled_padded_boxlist.get_field(fields.BoxListFields.corpus)
                 num_detections = sampled_boxlist.num_boxes()
@@ -214,8 +215,11 @@ class CRNN:
 
     def crop_feature_map(self, features_to_crop, bboxes):
       output_height, output_width = self._crop_size
+      # features_to_crop = tf.Print(features_to_crop, [tf.shape(features_to_crop)], message="features_to_crop", summarize=9999)
       def _keep_aspect_ratio_crop_and_resize(args):
         bbox, crop_width = args
+        # dbshape = tf.cast(tf.shape(features_to_crop), dtype=tf.float32)
+        # bbox = tf.Print(bbox, [dbshape[1] * (bbox[2] - bbox[0]), dbshape[2] * (bbox[3] - bbox[1])], message="how many cells under crop", summarize=99999)
         fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
           tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
         padded_crop = tf.pad(fixed_height_crop[0],
@@ -223,8 +227,12 @@ class CRNN:
         # padded_crop, _ =  padding_inputs_width(fixed_height_crop[0], self._crop_size, 1)
         return padded_crop
 
-      aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
-      crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
+      # aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
+      # crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
+      #   output_width)
+      num_feat_map_cells = tf.cast(tf.shape(features_to_crop)[2], dtype=tf.float32) * (bboxes[:, 3] - bboxes[:, 1])
+      # num_feat_map_cells = tf.Print(num_feat_map_cells, [num_feat_map_cells, tf.cast(tf.shape(features_to_crop)[1], dtype=tf.float32) * (bboxes[:, 2] - bboxes[:, 0])], message="num_feat_map_cells", summarize=9999)
+      crop_widths = tf.math.minimum(tf.cast(tf.round(2.0 * num_feat_map_cells), tf.int32),
         output_width)
       crop_widths = tf.math.maximum(crop_widths, 1)
       # crop_widths = tf.Print(crop_widths, [crop_widths], message="crop_widths", summarize=99999)
@@ -246,6 +254,7 @@ class CRNN:
 
         flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
             detection_boxes)    # [batch, height, width, features]
+        # flattened_detected_feature_maps tf.Print(flattened_detected_feature_maps, [tf.shape(flattened_detected_feature_maps)], message="flattened_detected_feature_maps", summarize=99999)
 
 
         with tf.variable_scope('Reshaping_cnn'):

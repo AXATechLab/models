@@ -654,7 +654,8 @@ def visualize_boxes_and_labels_on_image_array(
   # Create a display string (and color) for every box location, group any boxes
   # that correspond to the same location.
 
-  if template_boxes is not None:
+  # Template debug
+  if False:
     for i in range(template_boxes.shape[0]):
       ymin, xmin, ymax, xmax = template_boxes[i]
       draw_bounding_box_on_image_array(
@@ -699,7 +700,7 @@ def visualize_boxes_and_labels_on_image_array(
               class_name = 'N/A'
             display_str = str(class_name)
         if not skip_scores:
-          if not display_str:
+          if False: #not display_str:
             display_str = '{}%'.format(int(100*scores[i]))
           else:
             corpus = -2
