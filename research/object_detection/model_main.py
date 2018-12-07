@@ -26,6 +26,8 @@ from object_detection import model_hparams
 from object_detection import model_lib
 
 import os
+import logging
+
 # os.environ['TF_CPP_MIN_VLOG_LEVEL']= '3'
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -92,12 +94,13 @@ FLAGS = flags.FLAGS
 #   return True
 
 def main(unused_argv):
+
   flags.mark_flag_as_required('model_dir')
   flags.mark_flag_as_required('pipeline_config_path')
   sess_config = tf.ConfigProto()
   sess_config.gpu_options.allow_growth = True
   sess_config.gpu_options.per_process_gpu_memory_fraction = 0.9
-  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, session_config=sess_config, save_summary_steps=100, save_checkpoints_steps=1000)
+  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, session_config=sess_config, save_summary_steps=100, save_checkpoints_steps=1000 )
 
   train_and_eval_dict = model_lib.create_estimator_and_inputs(
       run_config=config,

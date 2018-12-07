@@ -99,7 +99,7 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None):
     A tf.data.Dataset based on the input_reader_config.
 
   Raises:
-    ValueError: On invalid input reader proto.
+    ValueError: On invalid input reader proto.train
     ValueError: If no input paths are specified.
   """
   if not isinstance(input_reader_config, input_reader_pb2.InputReader):
@@ -129,24 +129,48 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None):
         processed_tensors = transform_input_data_fn(processed_tensors)
       return processed_tensors
 
-    dataset = read_dataset(
+    datasets = [read_dataset(
         functools.partial(tf.data.TFRecordDataset, buffer_size=8 * 1000 * 1000),
-        config.input_path[:], input_reader_config)
-    if input_reader_config.sample_1_of_n_examples > 1:
-      dataset = dataset.shard(input_reader_config.sample_1_of_n_examples, 0)
-    # TODO(rathodv): make batch size a required argument once the old binaries
-    # are deleted.
-    if batch_size:
-      num_parallel_calls = batch_size * input_reader_config.num_parallel_batches
-    else:
-      num_parallel_calls = input_reader_config.num_parallel_map_calls
-    dataset = dataset.map(
-        process_fn,
-        num_parallel_calls=num_parallel_calls)
-    if batch_size:
-      dataset = dataset.apply(
-          tf.contrib.data.batch_and_drop_remainder(batch_size))
-    dataset = dataset.prefetch(input_reader_config.num_prefetch_batches)
-    return dataset
+        config.input_path[:], input_reader_config)]
+    if input_reader_config.HasField('tf_record_target_input_reader'):
+      datasets.append(read_dataset(
+          functools.partial(tf.data.TFRecordDataset, buffer_size=8 * 1000 * 1000),
+          input_reader_config.tf_record_target_input_reader.input_path[:], input_reader_config))
+    for i, dataset in enumerate(datasets):
+      if input_reader_config.sample_1_of_n_examples > 1:
+        dataset = dataset.shard(input_reader_config.sample_1_of_n_examples, 0)
+      # TODO(rathodv): make batch size a required argument once the old binaries
+      # are deleted.
+      if batch_size:
+        num_parallel_calls = batch_size * input_reader_config.num_parallel_batches
+      else:
+        num_parallel_calls = input_reader_config.num_parallel_map_calls
+      dataset = dataset.map(
+          process_fn,
+          num_parallel_calls=num_parallel_calls)
+      if batch_size:
+        dataset = dataset.apply(
+            tf.contrib.data.batch_and_drop_remainder(batch_size))
+      datasets[i] = dataset.prefetch(input_reader_config.num_prefetch_batches)
+
+    if len(datasets) == 1:
+      return datasets[0]
+    # source_tuple, target_tuple = [datasets[i].make_one_shot_iterator().get_next() for i in range(2)]
+    iters = [dataset.make_initializable_iterator() for dataset in datasets]
+    with tf.control_dependencies([it.initializer for it in iters]):
+      source_tuple, target_tuple = [it.get_next() for it in iters]
+      features_s, labels_s = source_tuple
+      features_t, labels_t = target_tuple
+      def concat(source, target, prefix="target_"):
+        target = {("target_" + feature): target[feature] for feature in target.keys()}
+        source.update(target)
+        return source
+
+      features = concat(features_s, features_t)
+      labels = concat(labels_s, labels_t)
+      return (features, labels)
+
+    # return ({feature: tf.concat([features1[feature], features2[feature]], axis=0) for feature in features1.keys()}, tf.concat([labels1, labels2], axis=0))
+
 
   raise ValueError('Unsupported input_reader_config.')

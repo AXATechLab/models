@@ -22,7 +22,7 @@ enum InstanceMaskType {
   PNG_MASKS = 2;        // Encoded PNG masks.
 }
 
-// Next id: 24
+// Next id: 25
 message InputReader {
   // Name of input reader. Typically used to describe the dataset that is read
   // by this input reader.
@@ -108,6 +108,7 @@ message InputReader {
     TFRecordInputReader tf_record_input_reader = 8;
     ExternalInputReader external_input_reader = 9;
   }
+  optional TFRecordInputReader tf_record_target_input_reader = 24;
 }
 
 // An input reader that reads TF Example protos from local TFRecord files.

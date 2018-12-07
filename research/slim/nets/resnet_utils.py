@@ -216,6 +216,7 @@ def stack_blocks_dense(net, blocks, output_stride=None,
         if output_stride is not None and current_stride > output_stride:
           raise ValueError('The target output_stride cannot be reached.')
 
+
   if output_stride is not None and current_stride != output_stride:
     raise ValueError('The target output_stride cannot be reached.')
 

@@ -481,6 +481,7 @@ def create_train_input_fn(train_config, train_input_config,
         train_input_config,
         transform_input_data_fn=transform_and_pad_input_data_fn,
         batch_size=params['batch_size'] if params else train_config.batch_size)
+
     return dataset
 
   return _train_input_fn

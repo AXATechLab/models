@@ -268,6 +268,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
+    print(features.keys())
     # preprocessed_images = tf.Print(preprocessed_images, [features[fields.InputDataFields.template_id]], message="Features", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None

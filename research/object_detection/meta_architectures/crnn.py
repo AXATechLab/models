@@ -26,7 +26,7 @@ class CRNN:
         values = parameters.alphabet_codes
         self.table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64,
-                    value_dtype=tf.int64), -1)
+                    value_dtype=tf.int64), 0)#-1)
         keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
         values = [c for c in parameters.alphabet_decoding]
         self.table_int2str = tf.contrib.lookup.HashTable(
