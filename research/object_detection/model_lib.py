@@ -215,6 +215,18 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     transcription_loss = 0
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
+    # def _get_target_domain(both_dict):
+    #   target = {}
+    #   for key in features.keys():
+    #     if key.startswith("target_"):
+    #       target[key[7:]] = features[key]
+    #   return target
+
+    # target_features = _get_target_domain(features)
+    # target_labels = _get_target_domain(labels)
+
+
+
     # Make sure to set the Keras learning phase. True during training,
     # False for inference.
     tf.keras.backend.set_learning_phase(is_training)
@@ -268,8 +280,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
-    print(features.keys())
-    # preprocessed_images = tf.Print(preprocessed_images, [features[fields.InputDataFields.template_id]], message="Features", summarize=99999)
+    # preprocessed_images = tf.Print(preprocessed_images, [features['debug'], features['domain']], message="Domain is", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None
     if use_tpu and train_config.use_bfloat16:
@@ -404,7 +415,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         if two_stages:
           train_transcription_op = tf.contrib.layers.optimize_loss(
               loss=transcription_loss,
-              global_step=global_step,
+              global_step=None,
+              increment_global_step=False,
               learning_rate=None,
               clip_gradients=clip_gradients_value, # Remove
               optimizer=transcription_optimizer,

@@ -155,22 +155,18 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None):
 
     if len(datasets) == 1:
       return datasets[0]
-    # source_tuple, target_tuple = [datasets[i].make_one_shot_iterator().get_next() for i in range(2)]
+
+    dataset_switch = tf.Variable(False)
     iters = [dataset.make_initializable_iterator() for dataset in datasets]
-    with tf.control_dependencies([it.initializer for it in iters]):
-      source_tuple, target_tuple = [it.get_next() for it in iters]
-      features_s, labels_s = source_tuple
-      features_t, labels_t = target_tuple
-      def concat(source, target, prefix="target_"):
-        target = {("target_" + feature): target[feature] for feature in target.keys()}
-        source.update(target)
-        return source
 
-      features = concat(features_s, features_t)
-      labels = concat(labels_s, labels_t)
-      return (features, labels)
+    for iterator in iters:
+      tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
 
-    # return ({feature: tf.concat([features1[feature], features2[feature]], axis=0) for feature in features1.keys()}, tf.concat([labels1, labels2], axis=0))
+    source_tuple, target_tuple = [it.get_next() for it in iters]
+    source_tuple[0]['domain'] = 'synth'
+    target_tuple[0]['domain'] = 'target'
 
+    return tf.cond(dataset_switch.assign(tf.logical_not(dataset_switch)),
+        lambda: source_tuple, lambda: target_tuple)
 
   raise ValueError('Unsupported input_reader_config.')
