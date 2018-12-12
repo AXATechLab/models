@@ -59,6 +59,7 @@ from __future__ import print_function
 import tensorflow as tf
 
 from nets import resnet_utils
+from functools import partial
 
 
 resnet_arg_scope = resnet_utils.resnet_arg_scope
@@ -74,6 +75,12 @@ class NoOpScope(object):
   def __exit__(self, exc_type, exc_value, traceback):
     return False
 
+
+@slim.add_arg_scope
+def bottleneck_da(inputs, depth, depth_bottleneck, stride, **kwargs):
+  is_source = tf.get_variable('is_source_domain', [], dtype=tf.bool)
+  inner_bn = partial(bottleneck, inputs=inputs, depth=depth, depth_bottleneck=depth_bottleneck, stride=stride, **kwargs)
+  return tf.cond(is_source, inner_bn, inner_bn)
 
 @slim.add_arg_scope
 def bottleneck(inputs,
@@ -257,7 +264,7 @@ def resnet_v1(inputs,
 resnet_v1.default_image_size = 224
 
 
-def resnet_v1_block(scope, base_depth, num_units, stride):
+def resnet_v1_block(scope, base_depth, num_units, stride, two_domains=False):
   """Helper function for creating a resnet_v1 bottleneck block.
 
   Args:
@@ -270,7 +277,11 @@ def resnet_v1_block(scope, base_depth, num_units, stride):
   Returns:
     A resnet_v1 bottleneck block.
   """
-  return resnet_utils.Block(scope, bottleneck, [{
+  if two_domains:
+    unit_fn = bottleneck_da
+  else:
+    unit_fn = bottleneck
+  return resnet_utils.Block(scope, unit_fn, [{
       'depth': base_depth * 4,
       'depth_bottleneck': base_depth,
       'stride': 1
@@ -329,7 +340,7 @@ def resnet_v1_101(inputs,
                    reuse=reuse, scope=scope, on_text=on_text)
 resnet_v1_101.default_image_size = resnet_v1.default_image_size
 
-def resnet_v1_101_text(inputs,
+def resnet_v1_101_da(inputs,
                   num_classes=None,
                   is_training=True,
                   global_pool=True,
@@ -337,20 +348,44 @@ def resnet_v1_101_text(inputs,
                   spatial_squeeze=True,
                   store_non_strided_activations=False,
                   reuse=None,
-                  scope='resnet_v1_101_text'):
+                  scope='resnet_v1_101',
+                  on_text=False):
   """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
   blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
+      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2, two_domains=True),
+      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2, two_domains=True),
       resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
-      resnet_v1_block('block4', base_depth=512, num_units=3, stride=2),
+      resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
   ]
   return resnet_v1(inputs, blocks, num_classes, is_training,
                    global_pool=global_pool, output_stride=output_stride,
                    include_root_block=True, spatial_squeeze=spatial_squeeze,
                    store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
+                   reuse=reuse, scope=scope, on_text=on_text)
 resnet_v1_101.default_image_size = resnet_v1.default_image_size
+
+# def resnet_v1_101_text(inputs,
+#                   num_classes=None,
+#                   is_training=True,
+#                   global_pool=True,
+#                   output_stride=None,
+#                   spatial_squeeze=True,
+#                   store_non_strided_activations=False,
+#                   reuse=None,
+#                   scope='resnet_v1_101_text'):
+#   """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
+#   blocks = [
+#       resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
+#       resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
+#       resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
+#       resnet_v1_block('block4', base_depth=512, num_units=3, stride=2),
+#   ]
+#   return resnet_v1(inputs, blocks, num_classes, is_training,
+#                    global_pool=global_pool, output_stride=output_stride,
+#                    include_root_block=True, spatial_squeeze=spatial_squeeze,
+#                    store_non_strided_activations=store_non_strided_activations,
+#                    reuse=reuse, scope=scope)
+# resnet_v1_101.default_image_size = resnet_v1.default_image_size
 
 
 def resnet_v1_152(inputs,

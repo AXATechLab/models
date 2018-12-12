@@ -573,7 +573,8 @@ def create_eval_input_fn(eval_config, eval_input_config, model_config):
     dataset = INPUT_BUILDER_UTIL_MAP['dataset_build'](
         eval_input_config,
         batch_size=params['batch_size'] if params else eval_config.batch_size,
-        transform_input_data_fn=transform_and_pad_input_data_fn)
+        transform_input_data_fn=transform_and_pad_input_data_fn,
+        is_eval=True)
     return dataset
 
   return _eval_input_fn

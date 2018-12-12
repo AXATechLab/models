@@ -96,7 +96,9 @@ FASTER_RCNN_FEATURE_EXTRACTOR_CLASS_MAP = {
     'faster_rcnn_resnet152':
     frcnn_resnet_v1.FasterRCNNResnet152FeatureExtractor,
     'faster_rcnn_resnet101_text':
-    frcnn_resnet_v1.FasterRCNNResnet101TextFeatureExtractor
+    frcnn_resnet_v1.FasterRCNNResnet101TextFeatureExtractor,
+    'faster_rcnn_resnet101_da':
+    frcnn_resnet_v1.FasterRCNNResnet101DAFeatureExtractor,
 }
 
 def build_transcription(model_config, detection_model, is_training, add_summaries=True):

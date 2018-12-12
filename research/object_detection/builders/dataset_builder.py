@@ -83,7 +83,7 @@ def read_dataset(file_read_func, input_files, config):
   return records_dataset
 
 
-def build(input_reader_config, batch_size=None, transform_input_data_fn=None):
+def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is_eval=False):
   """Builds a tf.data.Dataset.
 
   Builds a tf.data.Dataset by applying the `transform_input_data_fn` on all
@@ -153,20 +153,24 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None):
             tf.contrib.data.batch_and_drop_remainder(batch_size))
       datasets[i] = dataset.prefetch(input_reader_config.num_prefetch_batches)
 
-    if len(datasets) == 1:
+    if not is_eval and len(datasets) == 1: # This check is probably useless, it's just to keep variable names as before
       return datasets[0]
 
-    dataset_switch = tf.Variable(False)
+    is_source_var = tf.get_variable("is_source_domain", initializer=False, dtype=tf.bool)
     iters = [dataset.make_initializable_iterator() for dataset in datasets]
-
     for iterator in iters:
       tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
 
-    source_tuple, target_tuple = [it.get_next() for it in iters]
-    source_tuple[0]['domain'] = 'synth'
-    target_tuple[0]['domain'] = 'target'
+    if is_eval:
+      is_source = is_source_var.assign(False)
+      source_tuple = target_tuple = iters[0].get_next()
+      target_tuple[0]['domain'] = 'target'
+    else:
+      is_source = is_source_var.assign(tf.logical_not(is_source_var))
+      source_tuple, target_tuple = [it.get_next() for it in iters]
+      source_tuple[0]['domain'] = 'synth'
+      target_tuple[0]['domain'] = 'target'
 
-    return tf.cond(dataset_switch.assign(tf.logical_not(dataset_switch)),
-        lambda: source_tuple, lambda: target_tuple)
+    return tf.cond(is_source, lambda: source_tuple, lambda: target_tuple)
 
   raise ValueError('Unsupported input_reader_config.')

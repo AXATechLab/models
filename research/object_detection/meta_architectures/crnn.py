@@ -113,7 +113,7 @@ class CRNN:
             normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt,
                 lambda: gt_boxlists[0].get()))
             # Switch this on to train on groundtruth
-            # if mode == tf.estimator.ModeKeys.TRAIN:
+            # if True:#mode == tf.estimator.ModeKeys.TRAIN:
             #     normalized_boxlist = normalized_gt_boxlist
             #     num_detections = normalized_gt_boxlist.num_boxes()
 
