@@ -283,6 +283,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     # preprocessed_images = tf.Print(preprocessed_images, [features['debug'], features['domain']], message="Domain is", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None
+    detection_model.set_domain(features['is_source_domain'])
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
         prediction_dict = detection_model.predict(

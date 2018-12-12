@@ -1016,6 +1016,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     """
     image_shape = tf.shape(preprocessed_inputs)
 
+    print(self._feature_extractor)
     rpn_features_to_crop, self.endpoints = (
         self._feature_extractor.extract_proposal_features(
             preprocessed_inputs,
@@ -1153,6 +1154,9 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     flattened_shape = tf.stack([combined_shape[0] * combined_shape[1]] +
                                combined_shape[2:])
     return tf.reshape(inputs, flattened_shape)
+
+  def set_domain(self, domain):
+    self._feature_extractor.is_source_domain = domain
 
   def postprocess(self, prediction_dict, true_image_shapes):
     """Convert prediction tensors to final detections.

@@ -156,7 +156,7 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
     if not is_eval and len(datasets) == 1: # This check is probably useless, it's just to keep variable names as before
       return datasets[0]
 
-    is_source_var = tf.get_variable("is_source_domain", initializer=False, dtype=tf.bool)
+    is_source_var = tf.Variable(False, name="is_source_domain")
     iters = [dataset.make_initializable_iterator() for dataset in datasets]
     for iterator in iters:
       tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
@@ -164,13 +164,12 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
     if is_eval:
       is_source = is_source_var.assign(False)
       source_tuple = target_tuple = iters[0].get_next()
-      target_tuple[0]['domain'] = 'target'
     else:
       is_source = is_source_var.assign(tf.logical_not(is_source_var))
       source_tuple, target_tuple = [it.get_next() for it in iters]
-      source_tuple[0]['domain'] = 'synth'
-      target_tuple[0]['domain'] = 'target'
 
-    return tf.cond(is_source, lambda: source_tuple, lambda: target_tuple)
+    dataset_tuple = tf.cond(is_source, lambda: source_tuple, lambda: target_tuple)
+    dataset_tuple[0]['is_source_domain'] = is_source_var
+    return dataset_tuple
 
   raise ValueError('Unsupported input_reader_config.')

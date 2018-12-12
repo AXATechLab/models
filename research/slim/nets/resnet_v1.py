@@ -78,9 +78,11 @@ class NoOpScope(object):
 
 @slim.add_arg_scope
 def bottleneck_da(inputs, depth, depth_bottleneck, stride, **kwargs):
-  is_source = tf.get_variable('is_source_domain', [], dtype=tf.bool)
+  # with tf.variable_scope(domain, reuse=True):
+  #   is_source = tf.get_variable('is_source')
+  is_source_var = kwargs.pop('is_source_var')
   inner_bn = partial(bottleneck, inputs=inputs, depth=depth, depth_bottleneck=depth_bottleneck, stride=stride, **kwargs)
-  return tf.cond(is_source, inner_bn, inner_bn)
+  return tf.cond(is_source_var, inner_bn, inner_bn)
 
 @slim.add_arg_scope
 def bottleneck(inputs,
@@ -264,7 +266,7 @@ def resnet_v1(inputs,
 resnet_v1.default_image_size = 224
 
 
-def resnet_v1_block(scope, base_depth, num_units, stride, two_domains=False):
+def resnet_v1_block(scope, base_depth, num_units, stride, two_domains=False, is_source_var=None):
   """Helper function for creating a resnet_v1 bottleneck block.
 
   Args:
@@ -278,7 +280,7 @@ def resnet_v1_block(scope, base_depth, num_units, stride, two_domains=False):
     A resnet_v1 bottleneck block.
   """
   if two_domains:
-    unit_fn = bottleneck_da
+    unit_fn = partial(bottleneck_da, is_source_var=is_source_var)
   else:
     unit_fn = bottleneck
   return resnet_utils.Block(scope, unit_fn, [{
@@ -341,6 +343,7 @@ def resnet_v1_101(inputs,
 resnet_v1_101.default_image_size = resnet_v1.default_image_size
 
 def resnet_v1_101_da(inputs,
+                  is_source_var,
                   num_classes=None,
                   is_training=True,
                   global_pool=True,
@@ -352,8 +355,8 @@ def resnet_v1_101_da(inputs,
                   on_text=False):
   """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
   blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2, two_domains=True),
-      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2, two_domains=True),
+      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2, two_domains=True, is_source_var=is_source_var),
+      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2, two_domains=True, is_source_var=is_source_var),
       resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
       resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
   ]
