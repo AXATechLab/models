@@ -273,6 +273,9 @@ class FasterRCNNResnet101DAFeatureExtractor(faster_rcnn_meta_arch.FasterRCNNFeat
     channel_means = [123.68, 116.779, 103.939]
     return resized_inputs - [[channel_means]]
 
+  def decouple_domains(self, layer_dict):
+    return resnet_v1.resnet_v1_101_da_decouple(layer_dict)
+
   def _extract_proposal_features(self, preprocessed_inputs, scope):
     """Extracts first stage RPN features.
 
@@ -320,6 +323,7 @@ class FasterRCNNResnet101DAFeatureExtractor(faster_rcnn_meta_arch.FasterRCNNFeat
               output_stride=self._first_stage_features_stride,
               spatial_squeeze=False,
               scope=var_scope)
+
 
     handle = scope + '/%s/block3' % self._architecture
     return activations[handle], activations

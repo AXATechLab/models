@@ -345,6 +345,9 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       # if two_stages:
       #   losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
+      w_regularizer = detection_model.loss_weight_regularizer()
+      losses_dict['Loss/weight_regularization'] = w_regularizer
+      losses.append(w_regularizer)
       if train_config.add_regularization_loss:
         regularization_losses = tf.get_collection(
             tf.GraphKeys.REGULARIZATION_LOSSES)

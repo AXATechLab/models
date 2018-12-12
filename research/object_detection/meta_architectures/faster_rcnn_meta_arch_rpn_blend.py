@@ -1016,7 +1016,6 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     """
     image_shape = tf.shape(preprocessed_inputs)
 
-    print(self._feature_extractor)
     rpn_features_to_crop, self.endpoints = (
         self._feature_extractor.extract_proposal_features(
             preprocessed_inputs,
@@ -1674,6 +1673,16 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
     return tf.reshape(decoded_boxes.get(),
                       tf.stack([combined_shape[0], combined_shape[1],
                                 num_classes, 4]))
+
+  """Compute loss weight regularization as described in ... Layer names is a tuple of possible names of endpoint layers in the feature extractor,
+    from which the weights will be fetched"""
+  def loss_weight_regularizer(self):
+    source_layers, target_layers = self._feature_extractor.decouple_domains(self.endpoints)
+    contributions, l2 = [], tf.contrib.layers.l2_regularizer(0.0005)
+    for source_layer, target_layer in zip(source_layers, target_layers):
+      contributions.append(tf.exp(tf.square(l2(source_layer - target_layer))) - 1)
+    return tf.add_n(contributions)
+
 
   def loss(self, prediction_dict, true_image_shapes, scope=None):
     """Compute scalar loss tensors given prediction tensors.

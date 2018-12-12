@@ -60,6 +60,7 @@ import tensorflow as tf
 
 from nets import resnet_utils
 from functools import partial
+import re
 
 
 resnet_arg_scope = resnet_utils.resnet_arg_scope
@@ -78,11 +79,14 @@ class NoOpScope(object):
 
 @slim.add_arg_scope
 def bottleneck_da(inputs, depth, depth_bottleneck, stride, **kwargs):
-  # with tf.variable_scope(domain, reuse=True):
-  #   is_source = tf.get_variable('is_source')
   is_source_var = kwargs.pop('is_source_var')
   inner_bn = partial(bottleneck, inputs=inputs, depth=depth, depth_bottleneck=depth_bottleneck, stride=stride, **kwargs)
-  return tf.cond(is_source_var, inner_bn, inner_bn)
+
+  def wrap_bn():
+    with tf.variable_scope("target_domain"):
+      return inner_bn()
+
+  return tf.cond(is_source_var, inner_bn, wrap_bn)
 
 @slim.add_arg_scope
 def bottleneck(inputs,
@@ -266,6 +270,8 @@ def resnet_v1(inputs,
 resnet_v1.default_image_size = 224
 
 
+
+
 def resnet_v1_block(scope, base_depth, num_units, stride, two_domains=False, is_source_var=None):
   """Helper function for creating a resnet_v1 bottleneck block.
 
@@ -366,6 +372,20 @@ def resnet_v1_101_da(inputs,
                    store_non_strided_activations=store_non_strided_activations,
                    reuse=reuse, scope=scope, on_text=on_text)
 resnet_v1_101.default_image_size = resnet_v1.default_image_size
+
+def resnet_v1_101_da_decouple(layer_dict):
+  source_pattern = re.compile('(.+block[12]/unit_\\d+/)(bottleneck_v1/conv\\d+)')
+  source_tensors, target_tensors = [], []
+  with tf.variable_scope(tf.get_variable_scope(), reuse=True):
+    for source_key in layer_dict.keys():
+      m = re.match(source_pattern, source_key)
+      print(source_key)
+      if bool(m):
+        print("is_matched")
+        target_key = m.group(1) + "target_domain/" + m.group(2) + "/weights"
+        source_tensors.append(tf.get_variable(source_key + "/weights"))
+        target_tensors.append(tf.get_variable(target_key))
+    return source_tensors, target_tensors
 
 # def resnet_v1_101_text(inputs,
 #                   num_classes=None,

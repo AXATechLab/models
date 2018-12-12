@@ -278,6 +278,7 @@ def _get_outputs_from_inputs(input_tensors, detection_model,
                              output_collection_name, template_id, transcription_model=None):
   inputs = tf.to_float(input_tensors)
   preprocessed_inputs, true_image_shapes = detection_model.preprocess(inputs)
+  detection_model.set_domain(tf.constant(False))
   output_tensors = detection_model.predict(
       preprocessed_inputs, true_image_shapes, template_id)
   if transcription_model:
