@@ -1677,11 +1677,15 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
   """Compute loss weight regularization as described in ... Layer names is a tuple of possible names of endpoint layers in the feature extractor,
     from which the weights will be fetched"""
   def loss_weight_regularizer(self):
-    source_layers, target_layers = self._feature_extractor.decouple_domains(self.endpoints)
-    contributions, l2 = [], tf.contrib.layers.l2_regularizer(0.0005)
-    for source_layer, target_layer in zip(source_layers, target_layers):
-      contributions.append(tf.exp(tf.square(l2(source_layer - target_layer))) - 1)
-    return tf.add_n(contributions)
+    def compute_l2_reg():
+      source_layers, target_layers = self._feature_extractor.decouple_domains(self.endpoints)
+      contributions, l2 = [], tf.contrib.layers.l2_regularizer(1.0)
+      for source_layer, target_layer in zip(source_layers, target_layers):
+        contributions.append(tf.exp(l2(source_layer - target_layer)) - 1)
+        # contributions.append(tf.cast(l2(source_layer - target_layer), dtype=tf.float32))
+
+      return tf.add_n(contributions)
+    tf.cond(tf.less(tf.train.get_or_create_global_step(), tf.constant(200, dtype=tf.int64)), lambda: 0.0, compute_l2_reg)
 
 
   def loss(self, prediction_dict, true_image_shapes, scope=None):
