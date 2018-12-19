@@ -197,7 +197,7 @@ def stack_blocks_dense(net, blocks, output_stride=None,
             rate *= unit.get('stride', 1)
           else:
             unit_stride = unit.get('stride', 1)
-            if on_text: # and j > 0
+            if on_text and j > 0:
               unit = dict(unit, stride=[unit_stride, 1])
             net = block.unit_fn(net, rate=1, **unit)
             current_stride *= unit_stride

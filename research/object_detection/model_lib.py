@@ -268,6 +268,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
+    # preprocessed_images = tf.Print(preprocessed_images, [features['debug']], message="Features ", summarize=99999)
+
     # preprocessed_images = tf.Print(preprocessed_images, [features[fields.InputDataFields.template_id]], message="Features", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     two_stages = transcription_model != None
@@ -286,6 +288,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           template_ids=features[fields.InputDataFields.template_id])
       if two_stages:
         print("Running E2E architecture")
+        transcription_model.debug_features = features
         transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
