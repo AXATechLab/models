@@ -368,7 +368,9 @@ class CRNN:
     def write_to_file(self, dummy, dt_crops, source_id, corpora, transcriptions, true_sizes):
         # np.savetxt('/notebooks/Detection/workspace/models/E2E/cer_48/zoom_in/tf1.12/predictions/{}.txt'.format(source_id),
         #     np.concatenate([dt, gt], axis=1))
-        debug_writer = tf.python_io.TFRecordWriter('/notebooks/Detection/workspace/models/E2E/cer_48/single_vehicle/no_car/predictions/{}.tfrecord'.format(source_id))
+        path = '/notebooks/Detection/workspace/models/E2E/cer_48/zoom_in/tf1.12/predictions/{}.tfrecord'.format(source_id)
+        print("!!! The hard coded path is", path)
+        debug_writer = tf.python_io.TFRecordWriter(path)
         for i in range(dt_crops.shape[0]):
             crop = dt_crops[i]
             # du.write_tfrecord_example(debug_writer, crop, "{}_crop{}".format(features['debug'], i), "None",
@@ -444,9 +446,10 @@ class CRNN:
             # matched_gt_boxes = tf.boolean_mask(gt_boxlist.get(), indicator)
             # dets_corpora = tf.boolean_mask(padded_dets_corpora, indicator)
             # img = self.debug_features[fields.InputDataFields.image]
-            # temp_size = self._crop_size
+            # # Enable this line to bypass detection and crop using groundtruth
+            ## best_dets_boxes = matched_gt_boxes
             # crops, true_sizes = self.crop_feature_map_debug(img, best_dets_boxes, [32, 256])
-            # sampled_matched_predictions = tf.py_func(write_to_file, [sampled_matched_predictions, crops, self.debug_features['debug'], dets_corpora, sampled_matched_transcriptions, true_sizes],
+            # sampled_matched_predictions = tf.py_func(self.write_to_file, [sampled_matched_predictions, crops, self.debug_features['debug'], dets_corpora, sampled_matched_transcriptions, true_sizes],
             #         sampled_matched_predictions.dtype)
 
             # Compute CER on non-empty vectors

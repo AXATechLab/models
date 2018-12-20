@@ -101,19 +101,19 @@ class FasterRcnnBoxCoder(box_coder.BoxCoder):
     """
     ycenter_a, xcenter_a, ha, wa = anchors.get_center_coordinates_and_sizes()
 
-    with tf.control_dependencies([tf.print([tf.shape(rel_codes), tf.shape(anchors.get())], message="test")]):
-      ty, tx, th, tw = tf.unstack(tf.transpose(rel_codes))
-      if self._scale_factors:
-        ty /= self._scale_factors[0]
-        tx /= self._scale_factors[1]
-        th /= self._scale_factors[2]
-        tw /= self._scale_factors[3]
-      w = tf.exp(tw) * wa
-      h = tf.exp(th) * ha
-      ycenter = ty * ha + ycenter_a
-      xcenter = tx * wa + xcenter_a
-      ymin = ycenter - h / 2.
-      xmin = xcenter - w / 2.
-      ymax = ycenter + h / 2.
-      xmax = xcenter + w / 2.
-      return box_list.BoxList(tf.transpose(tf.stack([ymin, xmin, ymax, xmax])))
+    # with tf.control_dependencies([tf.print([tf.shape(rel_codes), tf.shape(anchors.get())], message="test")]):
+    ty, tx, th, tw = tf.unstack(tf.transpose(rel_codes))
+    if self._scale_factors:
+      ty /= self._scale_factors[0]
+      tx /= self._scale_factors[1]
+      th /= self._scale_factors[2]
+      tw /= self._scale_factors[3]
+    w = tf.exp(tw) * wa
+    h = tf.exp(th) * ha
+    ycenter = ty * ha + ycenter_a
+    xcenter = tx * wa + xcenter_a
+    ymin = ycenter - h / 2.
+    xmin = xcenter - w / 2.
+    ymax = ycenter + h / 2.
+    xmax = xcenter + w / 2.
+    return box_list.BoxList(tf.transpose(tf.stack([ymin, xmin, ymax, xmax])))
