@@ -64,6 +64,7 @@ class FasterRCNNResnetV1FeatureExtractor(
       raise ValueError('`first_stage_features_stride` must be 8 or 16 (or 32 for text).')
     self._architecture = architecture
     self._resnet_model = resnet_model
+    self.has_coupled_domains = False
     super(FasterRCNNResnetV1FeatureExtractor, self).__init__(
         is_training, first_stage_features_stride, batch_norm_trainable,
         reuse_weights, weight_decay)
@@ -251,6 +252,7 @@ class FasterRCNNResnet101DAFeatureExtractor(faster_rcnn_meta_arch.FasterRCNNFeat
       raise ValueError('`first_stage_features_stride` must be 8 or 16 (or 32 for text).')
     self._architecture = 'resnet_v1_101'
     self._resnet_model = resnet_v1.resnet_v1_101_da
+    self.has_coupled_domains = True
     super(FasterRCNNResnet101DAFeatureExtractor, self).__init__(
         is_training, first_stage_features_stride, batch_norm_trainable,
         reuse_weights, weight_decay)
