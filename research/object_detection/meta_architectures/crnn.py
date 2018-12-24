@@ -46,7 +46,10 @@ class CRNN:
         self.no_eval_op = {
             'eval/precision' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
             'eval/recall' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
-            'eval/CER' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32))
+            'eval/CER' : (tf.constant(0, dtype=tf.float32), tf.constant(0, dtype=tf.float32)),
+            'synth/eval/precision' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
+            'synth/eval/recall' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
+            'synth/eval/CER' : (tf.constant(0, dtype=tf.float32), tf.no_op())
         }
         self.no_postprocessing = {
             fields.DetectionResultFields.detection_boxes : tf.constant(0, dtype=tf.float32),
@@ -204,14 +207,58 @@ class CRNN:
                 # Check that at least one detection matches groundtruth
                 loss, predictions_dict = tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0),
                     lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
-                eval_metric_ops = self.no_eval_op
+                final_eval_metric_ops = self.no_eval_op
             else:
                 # Check that there is at least one detection (there might be none due to nms)
                 loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0), #tf.constant(False, dtype=tf.bool),
                     lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
-                eval_metric_ops = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
-                    normalized_gt_boxlist, gt_transcriptions[0], debug_corpora=padded_detection_corpora)
-            return [loss, predictions_dict, eval_metric_ops]
+                # eval_metric_ops = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
+                #     normalized_gt_boxlist, gt_transcriptions[0], debug_corpora=padded_detection_corpora)
+                # Get metrics on synth dataset (if any)
+                # with tf.variable_scope('synth_eval', reuse=False):
+                #     eval_metric_ops_synth = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
+                #         normalized_gt_boxlist, gt_transcriptions[0], debug_corpora=padded_detection_corpora)]
+                metric_names, synth_metric_names = {}, {}
+                def get_metrics(metric_dict):
+                    metrics = self.compute_eval_ops(predictions_dict, padded_matched_transcriptions, sampled_indices,
+                        normalized_gt_boxlist, gt_transcriptions[0], debug_corpora=padded_detection_corpora)
+                    for k, v in metrics.items():
+                        metric_dict[k] = v[0].name
+                    return metrics
+                def scoped_metrics():
+                    with tf.name_scope("synth_eval"):
+                        return get_metrics(synth_metric_names)
+
+                eval_metric_ops = tf.cond(self.debug_features['is_source_metrics'], scoped_metrics,
+                    lambda: get_metrics(metric_names), name="MetricCond")
+
+                final_eval_metric_ops = {}
+                for k, v in eval_metric_ops.items():
+                    synth_var = tf.get_default_graph().get_tensor_by_name(synth_metric_names[k])
+                    var = tf.get_default_graph().get_tensor_by_name(metric_names[k])
+                    # with tf.control_dependencies([self.debug_features['is_source_metrics'].assign(False), tf.print(self.debug_features['is_source_metrics'])]):
+                    #     var = tf.identity(v[0])
+                    # with tf.control_dependencies([self.debug_features['is_source_metrics'].assign(True), tf.print(self.debug_features['is_source_metrics'])]):
+                    #     synth_var = tf.identity(v[0])
+                    final_eval_metric_ops[k] = (var, v[1])
+                    final_eval_metric_ops["synth/" + k] = (synth_var, tf.no_op())
+
+                # Alternate metric evaluation
+                # final_eval_metric_ops = {}
+                # for k, v in eval_metric_ops.items():
+                #     var, op = v
+                #     final_eval_metric_ops[k] = (var, tf.cond(self.debug_features['is_source_metrics'],
+                #         lambda: tf.constant(0, dtype=op.dtype),
+                #         lambda: op))
+                # for k, v in eval_metric_ops_synth.items():
+                #     var, op = v
+                #     final_eval_metric_ops['synth/' + k] = (var, tf.cond(self.debug_features['is_source_metrics'],
+                #         lambda: op,
+                #         lambda: tf.constant(0, dtype=op.dtype)))
+
+
+
+            return [loss, predictions_dict, final_eval_metric_ops]
 
 
         predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
@@ -474,9 +521,10 @@ class CRNN:
                  tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
 
             # Print to console
-            precision = tf.Print(precision, [precision], message="Precision -- ")
-            recall = tf.Print(recall, [recall], message="Recall -- ")
-            CER = tf.Print(CER, [CER], message="CER -- ")
+            precision = tf.Print(precision, [precision], message="Precision -- ", name='precision')
+            recall = tf.Print(recall, [recall], message="Recall -- ", name="recall")
+            CER = tf.Print(CER, [CER], message="CER -- ", name='CER')
+
             # CER_op = tf.Print(CER_op, [predictions_dict['words'][0]], summarize=100)
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
