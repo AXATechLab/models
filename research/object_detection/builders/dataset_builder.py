@@ -153,23 +153,26 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
             tf.contrib.data.batch_and_drop_remainder(batch_size))
       datasets[i] = dataset.prefetch(input_reader_config.num_prefetch_batches)
 
-    if not is_eval and len(datasets) == 1: # This check is probably useless, it's just to keep variable names as before
-      return datasets[0]
+    # if not is_eval and len(datasets) == 1: # This check is probably useless, it's just to keep variable names as before
+    #   return datasets[0]
 
-    is_source_var = tf.Variable(False, name="is_source_domain")
+    is_source_domain = tf.Variable(False, name="is_source_domain")
     iters = [dataset.make_initializable_iterator() for dataset in datasets]
     for iterator in iters:
       tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
 
     if is_eval:
-      is_source = is_source_var.assign(False)
-      source_tuple = target_tuple = iters[0].get_next()
+      is_source = is_source_domain.assign(False)
+      source_iter = target_iter = iters[0]
+    elif len(datasets) == 1:
+      is_source = is_source_domain.assign(True)
+      source_iter = target_iter = iters[0]
     else:
-      is_source = is_source_var.assign(tf.logical_not(is_source_var))
-      source_tuple, target_tuple = [it.get_next() for it in iters]
+      is_source = is_source_domain.assign(tf.logical_not(is_source_domain))
+      source_iter, target_iter = iters
 
-    dataset_tuple = tf.cond(is_source, lambda: source_tuple, lambda: target_tuple)
-    dataset_tuple[0]['is_source_domain'] = is_source_var
+    dataset_tuple = tf.cond(is_source, lambda: source_iter.get_next(), lambda: target_iter.get_next())
+    dataset_tuple[0]['is_source_domain'] = is_source_domain
     return dataset_tuple
 
   raise ValueError('Unsupported input_reader_config.')
