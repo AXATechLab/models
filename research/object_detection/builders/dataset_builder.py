@@ -169,12 +169,12 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
     if is_eval and len(datasets) == 1:
       # Eval, case one data stream: always REAL domain and metrics on REAL
       is_source = is_source_metrics.assign(False)
-      source_iter = target_iter = iters[0]
+      target_iter = source_iter = iters[0]
       force_to_false = is_source_domain
     elif is_eval:
       # Eval, case two data streams: always REAL domain and alternate between metrics on SYNTH and REAL
       is_source = is_source_metrics.assign(tf.logical_not(is_source_metrics))
-      source_iter, target_iter = iters
+      target_iter, source_iter = iters
       force_to_false = is_source_domain
     elif len(datasets) == 1:
       # Train, case one data stream: always SYNTH domain and metrics on REAL (placeholder)

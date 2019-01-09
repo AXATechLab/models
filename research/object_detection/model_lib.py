@@ -439,7 +439,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
               tf.estimator.export.PredictOutput(final_response)
       }
 
-    final_eval_metric_ops, eval_metric_ops = None, None
+    eval_metric_ops = None
     scaffold = None
     if mode == tf.estimator.ModeKeys.EVAL:
       class_agnostic = (
@@ -463,15 +463,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth,
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
+      eval_dict['is_source_metrics'] = features['is_source_metrics']
+      eval_dict['debug'] = features['debug']
 
       if class_agnostic:
         category_index = label_map_util.create_class_agnostic_category_index()
       else:
         category_index = label_map_util.create_category_index_from_labelmap(
             eval_input_config.label_map_path)
-
-      # Eval metrics on a single example.
-      metric_names, synth_metric_names = {}, {}
       vis_metric_ops = None
       if not use_tpu and use_original_images:
         eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
@@ -482,45 +481,22 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             use_normalized_coordinates=False)
         vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
             eval_dict)
-      def get_eval_metric_ops(metric_names):
-        eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
-            eval_config, list(category_index.values()), eval_dict)
-        for loss_key, loss_tensor in iter(losses_dict.items()):
-          eval_metric_ops[loss_key] = tf.metrics.mean(loss_tensor)
-        # for var in optimizer_summary_vars:
-        #   eval_metric_ops[var.op.name] = (var, tf.no_op())
-        # if vis_metric_ops is not None:
-        #   eval_metric_ops.update(vis_metric_ops)
-        result = {}
-        for k, v in eval_metric_ops.items():
-          k = str(k)
-          result[k] = v
-          metric_names[k] = v[0].name
-        return result
 
-      def scoped_eval_metric_ops():
-        with tf.name_scope('synth_eval'):
-          return get_eval_metric_ops(synth_metric_names)
+      # tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
 
-      eval_metric_ops = tf.cond(features['is_source_metrics'],
-        scoped_eval_metric_ops, lambda: get_eval_metric_ops(metric_names), name="MetricCond")
-      final_eval_metric_ops = {}
-      for k, v in eval_metric_ops.items():
-        # var = tf.get_default_graph().get_tensor_by_name(metric_names[k])
-        # synth_var = tf.get_default_graph().get_tensor_by_name(synth_metric_names[k])
-        # with tf.control_dependencies([features['is_source_metrics'].assign(False)]):
-        #   var = tf.identity(v[0])
-        # with tf.control_dependencies([features['is_source_metrics'].assign(True)]):
-        #   synth_var = tf.identity(v[0])
-        final_eval_metric_ops[k] = (v[0], v[1])
-        final_eval_metric_ops["synth/" + k] = (v[0], tf.no_op())
 
-      final_eval_metric_ops.update(transcription_eval_ops)
+      # Eval metrics on a single example.
+      eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(
+          eval_config, list(category_index.values()), eval_dict)
+      for loss_key, loss_tensor in iter(losses_dict.items()):
+        eval_metric_ops[loss_key] = tf.metrics.mean(loss_tensor)
+      for var in optimizer_summary_vars:
+        eval_metric_ops[var.op.name] = (var, tf.no_op())
       if vis_metric_ops is not None:
-        final_eval_metric_ops.update(vis_metric_ops)
-      print(final_eval_metric_ops)
+        eval_metric_ops.update(vis_metric_ops)
+      eval_metric_ops = {str(k): v for k, v in eval_metric_ops.items()}
 
-      if False and eval_config.use_moving_averages: # Will this work with two datasets?
+      if eval_config.use_moving_averages:
         variable_averages = tf.train.ExponentialMovingAverage(0.0)
         variables_to_restore = variable_averages.variables_to_restore()
         keep_checkpoint_every_n_hours = (
@@ -535,7 +511,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       #     transcription_eval_op['eval/CER'],
       #     transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
-
+      # Concat with transcription eval
+      eval_metric_ops.update(transcription_eval_ops)
       # print(eval_metric_ops)
       # debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
       # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
@@ -548,7 +525,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           predictions=final_response,
           loss=total_loss + transcription_loss,
           train_op=train_op,
-          eval_metrics=final_eval_metric_ops,
+          eval_metrics=eval_metric_ops,
           export_outputs=export_outputs)
     else:
       return tf.estimator.EstimatorSpec(
@@ -556,7 +533,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           predictions=final_response,
           loss=total_loss + transcription_loss,
           train_op=train_op,
-          eval_metric_ops=final_eval_metric_ops,
+          eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,
           scaffold=scaffold)
 

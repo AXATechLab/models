@@ -100,7 +100,7 @@ def main(unused_argv):
   sess_config = tf.ConfigProto()
   sess_config.gpu_options.allow_growth = True
   sess_config.gpu_options.per_process_gpu_memory_fraction = 0.9
-  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, session_config=sess_config, save_summary_steps=100, save_checkpoints_steps=200)
+  config = tf.estimator.RunConfig(model_dir=FLAGS.model_dir, session_config=sess_config, save_summary_steps=100, save_checkpoints_steps=1)
 
   train_and_eval_dict = model_lib.create_estimator_and_inputs(
       run_config=config,

@@ -54,18 +54,18 @@ class CRNN:
             'eval/precision' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
             'eval/recall' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
             'eval/CER' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
-            'synth/eval/precision' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
-            'synth/eval/recall' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
-            'synth/eval/CER' : (tf.constant(0, dtype=tf.float32), tf.no_op())
+            'eval/precision/synth' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
+            'eval/recall/synth' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
+            'eval/CER/synth' : (tf.constant(0, dtype=tf.float32), tf.no_op())
         }
 
         self._metric_names = [
             'eval/precision',
             'eval/recall',
             'eval/CER',
-            'synth/eval/precision',
-            'synth/eval/recall',
-            'synth/eval/CER',
+            'eval/precision/synth',
+            'eval/recall/synth',
+            'eval/CER/synth',
         ]
 
         self.no_postprocessing = {
@@ -249,13 +249,19 @@ class CRNN:
                     lambda: tf.py_func(source_update_op, common_args, []),
                     lambda: tf.py_func(target_update_op, common_args, []))
 
-                # This var does the actual metric evaluation
+                # This var does the actual metric evaluation and stores the result in self._metrics
                 first_var = tf.py_func(self._first_value_op, [], tf.float32)
+                eval_metric_ops = {self._metric_names[0]: (first_var, update_op)}
+
 
                 with tf.control_dependencies([first_var]):
-                    eval_metric_ops = {self._metric_names[0]: (first_var, update_op)}
                     for metric in self._metric_names[1:]:
-                        eval_metric_ops[metric] = (tf.py_func(lambda: self._metrics[metric], [], tf.float32),
+                        # print(metric)
+                        # def debug(m):
+                        #     print(m, "is done")
+                        #     #lambda m: self._metrics[m]
+                        #     return self._metrics[m]
+                        eval_metric_ops[metric] = (tf.py_func(lambda m: self._metrics[m.decode('latin1')], [metric], tf.float32),
                             update_op)
 
 
