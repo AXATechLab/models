@@ -1079,6 +1079,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
           [rpn_box_predictor_features],
           num_anchors_per_location,
           scope=self.first_stage_box_predictor_scope)
+    print(box_predictions)
 
     box_encodings = tf.concat(
         box_predictions[box_predictor.BOX_ENCODINGS], axis=1)
@@ -1677,7 +1678,7 @@ class FasterRCNNMetaArchRPNBlend(model.DetectionModel):
   """Compute loss weight regularization as described in ... Layer names is a tuple of possible names of endpoint layers in the feature extractor,
     from which the weights will be fetched"""
   def loss_weight_regularizer(self):
-    if not self._feature_extractor.has_coupled_domains:
+    if not self._feature_extractor._has_coupled_domains:
       return 0.0
 
     def compute_l2_reg():

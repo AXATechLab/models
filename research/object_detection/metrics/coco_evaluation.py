@@ -21,6 +21,8 @@ from object_detection.metrics import coco_tools
 from object_detection.utils import json_utils
 from object_detection.utils import object_detection_evaluation
 
+from functools import partial
+
 
 class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
   """Class to evaluate COCO detection metrics."""
@@ -52,6 +54,7 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
     self._metrics = None
     self._include_metrics_per_category = include_metrics_per_category
     self._all_metrics_per_category = all_metrics_per_category
+    self._categories = categories
 
   def clear(self):
     """Clears the state to prepare for a fresh evaluation."""
@@ -239,7 +242,7 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
       update ops must be run together and similarly all value ops must be run
       together to guarantee correct behaviour.
     """
-    def update_op(
+    def update_op_py(
         image_id_batched,
         groundtruth_boxes_batched,
         groundtruth_classes_batched,
@@ -248,7 +251,8 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
         detection_boxes_batched,
         detection_scores_batched,
         detection_classes_batched,
-        num_det_boxes_per_image):
+        num_det_boxes_per_image,
+        evaluator=self):
       """Update operation for adding batch of images to Coco evaluator."""
 
       for (image_id, gt_box, gt_class, gt_is_crowd, num_gt_box, det_box,
@@ -258,13 +262,13 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
                num_gt_boxes_per_image,
                detection_boxes_batched, detection_scores_batched,
                detection_classes_batched, num_det_boxes_per_image):
-        self.add_single_ground_truth_image_info(
+        evaluator.add_single_ground_truth_image_info(
             image_id, {
                 'groundtruth_boxes': gt_box[:num_gt_box],
                 'groundtruth_classes': gt_class[:num_gt_box],
                 'groundtruth_is_crowd': gt_is_crowd[:num_gt_box]
             })
-        self.add_single_detected_image_info(
+        evaluator.add_single_detected_image_info(
             image_id,
             {'detection_boxes': det_box[:num_det_box],
              'detection_scores': det_score[:num_det_box],
@@ -316,15 +320,23 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
             tf.shape(detection_boxes)[1:2],
             multiples=tf.shape(detection_boxes)[0:1])
 
-    update_op = tf.py_func(update_op, [image_id,
-                                       groundtruth_boxes,
-                                       groundtruth_classes,
-                                       groundtruth_is_crowd,
-                                       num_gt_boxes_per_image,
-                                       detection_boxes,
-                                       detection_scores,
-                                       detection_classes,
-                                       num_det_boxes_per_image], [])
+
+    common_args = [image_id,
+                   groundtruth_boxes,
+                   groundtruth_classes,
+                   groundtruth_is_crowd,
+                   num_gt_boxes_per_image,
+                   detection_boxes,
+                   detection_scores,
+                   detection_classes,
+                   num_det_boxes_per_image]
+
+    source_evaluator = CocoDetectionEvaluator(self._categories, self._include_metrics_per_category, self._all_metrics_per_category)
+    source_update_op = partial(update_op_py, evaluator=source_evaluator)
+    target_update_op = partial(update_op_py, evaluator=self)
+    update_op = tf.cond(eval_dict['is_source_metrics'],
+                    lambda: tf.py_func(source_update_op, common_args, []),
+                    lambda: tf.py_func(target_update_op, common_args, []))
     metric_names = ['DetectionBoxes_Precision/mAP',
                     'DetectionBoxes_Precision/mAP@.50IOU',
                     'DetectionBoxes_Precision/mAP@.75IOU',
@@ -344,12 +356,14 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
 
     def first_value_func():
       self._metrics = self.evaluate()
+      source_evaluator._metrics = source_evaluator.evaluate()
       self.clear()
+      source_evaluator.clear()
       return np.float32(self._metrics[metric_names[0]])
 
-    def value_func_factory(metric_name):
+    def value_func_factory(metric_name, evaluator=self):
       def value_func():
-        return np.float32(self._metrics[metric_name])
+        return np.float32(evaluator._metrics[metric_name])
       return value_func
 
     # Ensure that the metrics are only evaluated once.
@@ -358,7 +372,10 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
     with tf.control_dependencies([first_value_op]):
       for metric_name in metric_names[1:]:
         eval_metric_ops[metric_name] = (tf.py_func(
-            value_func_factory(metric_name), [], np.float32), update_op)
+            value_func_factory(metric_name, evaluator=self), [], np.float32), update_op)
+      for metric_name in metric_names:
+        eval_metric_ops[metric_name + "/synth"] = (tf.py_func(
+            value_func_factory(metric_name, evaluator=source_evaluator), [], np.float32), update_op)
     return eval_metric_ops
 
 

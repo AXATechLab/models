@@ -463,6 +463,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth,
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
+      eval_dict['is_source_metrics'] = features['is_source_metrics']
+      eval_dict['debug'] = features['debug']
 
       if class_agnostic:
         category_index = label_map_util.create_class_agnostic_category_index()
