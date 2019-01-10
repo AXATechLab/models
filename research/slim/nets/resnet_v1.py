@@ -308,7 +308,8 @@ def resnet_v1_50(inputs,
                  spatial_squeeze=True,
                  store_non_strided_activations=False,
                  reuse=None,
-                 scope='resnet_v1_50'):
+                 scope='resnet_v1_50',
+                 on_text=False):
   """ResNet-50 model of [1]. See resnet_v1() for arg and return description."""
   blocks = [
       resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
@@ -320,7 +321,7 @@ def resnet_v1_50(inputs,
                    global_pool=global_pool, output_stride=output_stride,
                    include_root_block=True, spatial_squeeze=spatial_squeeze,
                    store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
+                   reuse=reuse, scope=scope, on_text=on_text)
 resnet_v1_50.default_image_size = resnet_v1.default_image_size
 
 
