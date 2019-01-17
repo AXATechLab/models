@@ -30,8 +30,6 @@ from object_detection.core import balanced_positive_negative_sampler as sampler
 from object_detection.core import post_processing
 from object_detection.core import target_assigner
 from object_detection.meta_architectures import faster_rcnn_meta_arch
-from object_detection.meta_architectures import faster_rcnn_meta_arch_override_RPN
-from object_detection.meta_architectures import faster_rcnn_meta_arch_rpn_blend
 from object_detection.meta_architectures import rfcn_meta_arch
 from object_detection.meta_architectures import ssd_meta_arch
 from object_detection.models import faster_rcnn_inception_resnet_v2_feature_extractor as frcnn_inc_res
@@ -139,12 +137,6 @@ def build(model_config, is_training, add_summaries=True,
                             add_background_class)
   if meta_architecture == 'faster_rcnn':
     return _build_faster_rcnn_model(model_config.faster_rcnn, is_training,
-                                    add_summaries, meta_architecture)
-  if meta_architecture == 'faster_rcnn_override_RPN':
-    return _build_faster_rcnn_model(model_config.faster_rcnn_override_RPN, is_training,
-                                    add_summaries, meta_architecture)
-  if meta_architecture == 'faster_rcnn_rpn_blend':
-    return _build_faster_rcnn_model(model_config.faster_rcnn_rpn_blend, is_training,
                                     add_summaries, meta_architecture)
   raise ValueError('Unknown meta architecture: {}'.format(meta_architecture))
 
@@ -347,13 +339,23 @@ def _build_faster_rcnn_feature_extractor(
 
 
 def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
-  json_path = crnn_config.json_dir # placeholder for actual values
+  # json_path = crnn_config.json_dir # placeholder for actual values
+  # dict_params = import_params_from_json(json_filename=json_path)
+
   crop_size = crnn_config.crop_size
   start_at_step = crnn_config.start_at_step
   backprop_feature_map = crnn_config.backprop_feature_map
   backprop_detection = crnn_config.backprop_detection
-  dict_params = import_params_from_json(json_filename=json_path)
+  dict_params = {
+    "alphabet": crnn_config.alphabet,
+    "alphabet_decoding": crnn_config.alphabet_decoding,
+    "num_corpora": crnn_config.num_corpora,
+    "keep_prob": crnn_config.keep_prob_dropout,
+    "nb_logprob": crnn_config.nb_logprob,
+    "top_paths": crnn_config.top_paths,
+  }
   parameters = Params(**dict_params)
+
   crnn_target_assigner = target_assigner.create_target_assigner(
       'CRNN', 'transcription',
       use_matmul_gather=False,
@@ -525,32 +527,6 @@ def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_arch
         **common_kwargs)
   elif meta_architecture == 'faster_rcnn':
     return faster_rcnn_meta_arch.FasterRCNNMetaArch(
-        initial_crop_size=initial_crop_size,
-        maxpool_kernel_size=maxpool_kernel_size,
-        maxpool_stride=maxpool_stride,
-        second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
-        second_stage_mask_prediction_loss_weight=(
-            second_stage_mask_prediction_loss_weight),
-        **common_kwargs)
-  elif meta_architecture == 'faster_rcnn_override_RPN':
-    return faster_rcnn_meta_arch_override_RPN.FasterRCNNMetaArchOverrideRPN(
-        initial_crop_size=initial_crop_size,
-        maxpool_kernel_size=maxpool_kernel_size,
-        maxpool_stride=maxpool_stride,
-        first_stage_proposals_path=first_stage_proposals_path,
-        second_stage_mask_rcnn_box_predictor=second_stage_box_predictor,
-        second_stage_mask_prediction_loss_weight=(
-            second_stage_mask_prediction_loss_weight),
-        **common_kwargs)
-  elif meta_architecture == 'faster_rcnn_rpn_blend':
-    # common_kwargs['use_matmul_crop_and_resize'] = False
-    # common_kwargs['first_stage_nms_iou_threshold'] = frcnn_config.first_stage_nms_iou_threshold
-    # common_kwargs['first_stage_nms_score_threshold'] = frcnn_config.first_stage_nms_score_threshold
-    # common_kwargs.pop('crop_and_resize_fn')
-    # common_kwargs.pop('first_stage_non_max_suppression_fn')
-    # common_kwargs.pop('resize_masks')
-    # common_kwargs.pop('use_static_shapes')
-    return faster_rcnn_meta_arch_rpn_blend.FasterRCNNMetaArchRPNBlend(
         initial_crop_size=initial_crop_size,
         maxpool_kernel_size=maxpool_kernel_size,
         maxpool_stride=maxpool_stride,

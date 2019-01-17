@@ -14,10 +14,44 @@ import numpy as np # debug
 sys.path.append("/notebooks/text-renderer/generation/")
 import data_util as du
 from pprint import pprint
+"""
+
+Two-streams evaluation:
+
+In order to evaluate the SYNTH and REAL datasets, we need to separate the two from the
+input pipeline (we can only have one eval spec, so the input pipeline has to combine the two
+datasets into one). In order to do this, the input pipeline keeps track of whether the read
+image is SYNTH (also referred to as source) or REAL (also called target). This information
+is in input_features['is_source_metrics'].
+
+The Tensorflow estimator executes the update op of every metric for every example and calls
+the variable read at the end of the input stream. A naive approach would be to condition both
+operations on input_features['is_source_metrics']. However, because of this conditioning, the variable read could
+only return one value depending on the condition, since it is requested only once.
+With this approach, it is not possible to retrieve the metric value. Note that
+the variable read does need to be conditioned otherwise tensorflow forbids the variable read.
+
+My solution mimics the implementation of coco metrics: the update op simply stores the parameters
+of each example evaluation. We maintain two datastructures, one for SYNTH and one for EVAL.
+At variable read, we can finally evaluate metrics and read them without any conditioning.
+Metric evaluation occurs by creating two sessions, one for each stream.
+
+self._metric_names is a list used to establish an arbitrary ordering of the metric keys.
+ We need the ordering to decide which is the first metric to evaluate.
+ All the other metrics will depend on the first one. The first metric carries out the
+ evaluation of ALL the metrics and stores the result in self._metrics.
+"""
 
 
 class CRNN:
 
+    """
+        Get the alphabet hash tables. This function is called when initializing a session
+        for either train or eval streams.
+
+        Args:
+            parameters: A Params object, the CRNN parameters
+    """
     def _get_tables(self, parameters):
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
@@ -34,22 +68,41 @@ class CRNN:
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
         crop_size, start_at_step, backprop_feature_map, backprop_detection):
+
+        # The fixed size which all detections will be resized to
         self._crop_size = [int(d) for d in crop_size]
+
+        # Enable the CRNN at this global step
         self._start_at_step = start_at_step
+
         self.parameters = parameters
+
+        # Access the detection model parameters. TODO: rethink this dependency
         self.detection_model = detection_model
+
+        # whether to let gradient flow into the feature map or the detection layers
         self._backprop_feature_map = backprop_feature_map
         self._backprop_detection = backprop_detection
+
+        # Standard Target assigner used to match groundtruth to detections or viceversa
         self.target_assigner = target_assigner
+
+        # The template assigner used to match detections and groundtruth to the template
         self.template_assigner = template_assigner
 
+        # The custom alphabet encoder and decoder
         self.table_str2int, self.table_int2str = self._get_tables(parameters)
-        self.debug = 0
 
+        # Return zero loss in predict and eval mode
         self.zero_loss = tf.constant(0, dtype=tf.float32)
+
+        # This null symbol is used to pad predictions or groundtruth to a specific size for
+        # metric evaluation (precision and recall). Note that this symbol is not in the alphabet,
+        # so it will encoded as table_str2int's default value
         self.NULL = '?'
 
 
+        # Placeholder for eval ops, mainly used to match tf.cond branches
         self.no_eval_op = {
             'eval/precision' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
             'eval/recall' : (tf.constant(0, dtype=tf.float32), tf.no_op()),
@@ -59,6 +112,7 @@ class CRNN:
             'eval/CER/synth' : (tf.constant(0, dtype=tf.float32), tf.no_op())
         }
 
+        # Arbitrary ordering of the metrics. The ordering is used to determine which is the first metric to be evaluated in the dual-stream eval.
         self._metric_names = [
             'eval/precision',
             'eval/recall',
@@ -68,6 +122,8 @@ class CRNN:
             'eval/CER/synth',
         ]
 
+        # Being the third stage of the architecture, CRNN takes care of postprocessing stage two.
+        # However, if CRNN is disabled, there's no reason to postprocess the predictions.
         self.no_postprocessing = {
             fields.DetectionResultFields.detection_boxes : tf.constant(0, dtype=tf.float32),
             fields.DetectionResultFields.detection_scores : tf.constant(0, dtype=tf.float32),
@@ -75,15 +131,33 @@ class CRNN:
             fields.DetectionResultFields.num_detections : tf.constant(0, dtype=tf.float32)
         }
 
-        # Initialize Metric Lists: We store predictions instead of computing metrics directly for
+        # Metric Args Lists: We store predictions instead of computing metrics directly for
         # 2-streams evaluation. Indeed there is no way of computing multiple metric sets in one eval
         # pass, because the resulting metrics would be unfetchable.
         self._source_predictions, self._target_predictions = [], []
 
+    """
+       Build a placeholder prediction of CRNN. It can be used to return a null prediction.
+
+        Args:
+            detections_dict: the postprocessed detections to be integrated in the placeholder result
+        Returns:
+            A placeholder comforming to a CRNN prediction as far as type goes and with the
+            given detections in it. Structure: [loss, transcription_dict, eval_metric_ops]
+    """
     def no_result_fn(self, detections_dict):
         return lambda : self.no_forward_pass(detections_dict) + [self.no_eval_op]
 
     def no_forward_pass(self, detections_dict):
+        """
+       Build a placeholder forward pass of CRNN.
+
+        Args:
+            detections_dict: the postprocessed detections to be integrated in the placeholder result
+        Returns:
+            A placeholder comforming to a CRNN forward pass as far as type goes and with the
+            given detections in it.
+        """
         transcriptions_dict = {
             'raw_predictions': tf.constant(0, dtype=tf.int64),
             'labels': tf.constant('', dtype=tf.string),
@@ -95,9 +169,19 @@ class CRNN:
         transcriptions_dict.update(detections_dict)
         return [self.zero_loss, transcriptions_dict]
 
-    # This is in the same fashion as predict_third_stage's inference
-    # TODO: use parameters instead of copying FasterRCNN's
+
     def predict(self, prediction_dict, true_image_shapes, mode):
+        """
+       Build the CRNN computational graph.
+
+        Args:
+            prediction_dict: the detections coming from stage 2
+            true_image_shapes: the shape of the input image
+            mode: train, eval or predict
+        Returns:
+            A placeholder comforming to a CRNN prediction as far as type goes and with the
+            given detections in it.
+        """
         self.debug_root_variable_scope = tf.get_variable_scope()
         with tf.variable_scope('crnn'):
             predict_fn = partial(self._predict, mode=mode, prediction_dict=prediction_dict,
@@ -112,29 +196,29 @@ class CRNN:
 
     def _predict(self, prediction_dict, true_image_shapes, mode):
         detection_model = self.detection_model
+        # postprocess and unpad detections
         detections_dict = detection_model._postprocess_box_classifier(
             prediction_dict['refined_box_encodings'],
             prediction_dict['class_predictions_with_background'],
             prediction_dict['proposal_boxes'],
             prediction_dict['num_proposals'],
-            #prediction_dict['proposal_corpora'],
             true_image_shapes)
         num_detections = tf.cast(detections_dict[
             fields.DetectionResultFields.num_detections][0], tf.int32)
         normalized_detection_boxes = detections_dict[
           fields.DetectionResultFields.detection_boxes][0][:num_detections]
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
-
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0][:num_detections]
-        # detection_corpora = detections_dict[
-        #     fields.DetectionResultFields.detection_corpora][0]
-        detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32) # Unused
+        # Placeholder detection corpora
+        detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32)
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
+        # Remove detection classes since text detection is not a multiclass problem
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
 
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
 
+        # Fetch groundtruth
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
                 stage='transcription')
@@ -144,6 +228,7 @@ class CRNN:
             # Guard for examples with no objects to detect (box_list_ops throws an exception)
             normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt,
                 lambda: gt_boxlists[0].get()))
+
             # Switch this on to train on groundtruth
             # if True:#mode == tf.estimator.ModeKeys.TRAIN:
             #     normalized_boxlist = normalized_gt_boxlist
@@ -156,16 +241,13 @@ class CRNN:
             #     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
 
 
+        # Template Assignment (boxes with IOU bigger than 0.05 to some template space are mapped to that space)
         template_boxlist = box_list.BoxList(detection_model.curr_template_boxes)
         (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
         template_corpora = detection_model.curr_template_corpora
         padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
-        # Filter out false positives, TODO: move in EVAL
-        # positive_indicator = match.matched_column_indicator()
-        # valid_indicator = tf.range(detection_boxlist.num_boxes()) < num_detections
-        # sampled_indices = tf.logical_and(positive_indicator, valid_indicator)
-        # detection_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
+        # The name of the tf.cond operation
         BATCH_COND = 'BatchCond'
 
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
@@ -181,7 +263,7 @@ class CRNN:
                 [1] + detection_model._num_classes * [0], dtype=tf.float32),
                 groundtruth_weights=gt_weights[0])
 
-            padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL) # This list is padded with NULL
+            padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL)
 
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
 
@@ -256,11 +338,6 @@ class CRNN:
 
                 with tf.control_dependencies([first_var]):
                     for metric in self._metric_names[1:]:
-                        # print(metric)
-                        # def debug(m):
-                        #     print(m, "is done")
-                        #     #lambda m: self._metrics[m]
-                        #     return self._metrics[m]
                         eval_metric_ops[metric] = (tf.py_func(lambda m: self._metrics[m.decode('latin1')], [metric], tf.float32),
                             update_op)
 
@@ -357,6 +434,12 @@ class CRNN:
              # sess.run(tf.global_variables_initializer())
             for args in preds:
                 sess.run(ops, feed_dict={"arg_{}:0".format(i): args[i] for i in range(len(args))})
+                # Enable this to fetch per-example metrics
+                # metrics = sess.run(variables)
+                # pprint(metrics)
+                # stream_vars_valid = [v for v in tf.local_variables() if 'evaluation/' in v.name]
+                # sess.run(tf.variables_initializer(stream_vars_valid))
+
             preds.clear()
 
         with tf.Session(graph=g) as session:
@@ -397,7 +480,7 @@ class CRNN:
         #     seq_len_inputs],
         #     seq_len_inputs.dtype)
         # - Debug bypass
-        # with tf.variable_scope(self.debug_root_variable_scope, reuse=True): # spaghetti scope
+        # with tf.variable_scope(self.debug_root_variable_scope, reuse=True):
         #     flattened_detected_feature_maps, self.endpoints = (
         #     detection_model._feature_extractor.extract_proposal_features(
         #         flattened_detected_feature_maps,
@@ -501,7 +584,6 @@ class CRNN:
         if not int2string:
             int2string = self.table_int2str
 
-
         with tf.name_scope('evaluation'):
             def encode_groundtruth(matched_transcriptions):
                 matched_codes = self.str2code(matched_transcriptions, string2int)
@@ -529,9 +611,7 @@ class CRNN:
             (_, _, _, _, match) = self.target_assigner.assign(gt_boxlist, detection_boxlist)
             padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
 
-            # padded_best_predictions = tf.Print(padded_best_predictions, [padded_best_predictions], message="padded_best_predictions", summarize=9999)
             unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
-            # unpadded_gt_transcriptions = tf.Print(unpadded_gt_transcriptions, [unpadded_gt_transcriptions], message="unpadded_gt_transcriptions", summarize=9999)
             target_words = encode_groundtruth(unpadded_gt_transcriptions)
             # target_words = print_string_tensor(target_words, padded_best_predictions, "recall")
             recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
@@ -539,6 +619,8 @@ class CRNN:
 
             # Compute Character Error Rate
             indicator = match.matched_column_indicator()
+            # Enable this to select one type
+            # indicator = tf.logical_and(match.matched_column_indicator(), )
             sampled_matched_transcriptions = tf.boolean_mask(unpadded_gt_transcriptions, indicator)
             sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
 

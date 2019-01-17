@@ -374,15 +374,14 @@ def resnet_v1_101_da(inputs,
                    reuse=reuse, scope=scope, on_text=on_text)
 resnet_v1_101.default_image_size = resnet_v1.default_image_size
 
+
 def resnet_v1_101_da_decouple(layer_dict):
   source_pattern = re.compile('(.+block[12]/unit_\\d+/)(bottleneck_v1/conv\\d+)')
   source_tensors, target_tensors = [], []
   with tf.variable_scope(tf.get_variable_scope(), reuse=True):
     for source_key in layer_dict.keys():
       m = re.match(source_pattern, source_key)
-      print(source_key)
       if bool(m):
-        print("is_matched")
         target_key = m.group(1) + "target_domain/" + m.group(2) + "/weights"
         source_tensors.append(tf.get_variable(source_key + "/weights"))
         target_tensors.append(tf.get_variable(target_key))

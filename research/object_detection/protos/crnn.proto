@@ -4,10 +4,16 @@ package object_detection.protos;
 
 // TODO: Rework this into an actual config file
 message CRNN {
-  required string json_dir = 1;
   optional float assigner_iou_threshold = 2 [default = 0.5];
   repeated int32 crop_size = 3;
   optional int32 start_at_step = 4 [default = -1];
   optional bool backprop_feature_map = 5 [default=false];
   optional bool backprop_detection = 6 [default=false];
+  optional string alphabet = 7;
+  optional string alphabet_decoding = 8;
+  optional int32 num_corpora = 9;
+  optional float keep_prob_dropout = 10 [default=0.8];
+  optional int32 nb_logprob = 11 [default=20];
+  optional int32 top_paths = 12 [default=3];
+
 }

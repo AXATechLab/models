@@ -105,10 +105,15 @@ from object_detection.core import box_list_ops
 from object_detection.core import box_predictor
 from object_detection.core import losses
 from object_detection.core import model
+from object_detection.core import post_processing
 from object_detection.core import standard_fields as fields
 from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
+
+import sys, os
+sys.path.append("/notebooks/text-renderer/generation/")
+import data_util
 
 slim = tf.contrib.slim
 
@@ -237,6 +242,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
                first_stage_sampler,
                first_stage_non_max_suppression_fn,
                first_stage_max_proposals,
+               first_stage_proposals_path,
                first_stage_localization_loss_weight,
                first_stage_objectness_loss_weight,
                crop_and_resize_fn,
@@ -389,13 +395,36 @@ class FasterRCNNMetaArch(model.DetectionModel):
     """
     # TODO(rathodv): add_summaries is currently unused. Respect that directive
     # in the future.
-    print("Running the original FasterRCNN")
     super(FasterRCNNMetaArch, self).__init__(num_classes=num_classes)
 
     if not isinstance(first_stage_anchor_generator,
                       grid_anchor_generator.GridAnchorGenerator):
       raise ValueError('first_stage_anchor_generator must be of type '
                        'grid_anchor_generator.GridAnchorGenerator.')
+
+    # Michele: Read template proposals (the white spaces)
+    first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
+    template_proposals, template_corpora, tids = [], [], []
+    def template_func(img, root, name, folder):
+      _, _, annotations = data_util.xml_to_numpy(None, root, normalize=True)
+      tids.append(int(root.xpath("./template_id")[0].text))
+      template_proposals.append(tf.constant(annotations['gt_boxes'], dtype=tf.float32))
+      template_corpora.append(tf.constant(annotations['gt_corpora'], dtype=tf.int32))
+    data_util.read_xml_batch_and_apply_fn(first_stage_proposals_path, template_func)
+    # Sort because annotations are read in arbitrary order.
+    sorted_templates = sorted(zip(tids, template_proposals, template_corpora), key=lambda x: x[0])
+    sorted_template_proposals, sorted_template_corpora = [], []
+    for (tid, proposals, corpus) in sorted_templates:
+      sorted_template_proposals.append(proposals)
+      sorted_template_corpora.append(corpus)
+    # Stack templates in a single tensors by padding them to the longest template
+    self.num_template_proposals = tf.constant([x.shape[0] for x in sorted_template_proposals], dtype=tf.int32)
+    max_len = tf.reduce_max(self.num_template_proposals, axis=0)
+    self.template_proposals = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]], [0, 0]]),
+      sorted_template_proposals)))
+    self.template_corpora = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]]]),
+     sorted_template_corpora)))
+
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn
@@ -530,7 +559,6 @@ class FasterRCNNMetaArch(model.DetectionModel):
       preprocessed_inputs: a [batch, height_out, width_out, channels] float
         tensor representing a batch of images.
       true_image_shapes: int32 tensor of shape [batch, 3] where each row is
-        of the form [height, width, channels] indicating the shapes
         of true images in the resized images, as resized images can be padded
         with zeros.
     Raises:
@@ -570,7 +598,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
                                         clip_heights, clip_widths], axis=1))
     return clip_window
 
-  def predict(self, preprocessed_inputs, true_image_shapes):
+  def predict(self, preprocessed_inputs, true_image_shapes, template_ids):
     """Predicts unpostprocessed tensors from input tensor.
 
     This function takes an input batch of images and runs it through the
@@ -646,10 +674,19 @@ class FasterRCNNMetaArch(model.DetectionModel):
     Raises:
       ValueError: If `predict` is called before `preprocess`.
     """
+
     (rpn_box_predictor_features, rpn_features_to_crop, anchors_boxlist,
      image_shape) = self._extract_rpn_feature_maps(preprocessed_inputs)
     (rpn_box_encodings, rpn_objectness_predictions_with_background
     ) = self._predict_rpn_proposals(rpn_box_predictor_features)
+
+    # Pick the template that has the same id as the example
+    # Assumption: batch size is always 1
+    tid = tf.cast(template_ids, dtype=tf.int32)[0]
+    num_temp_props = self.num_template_proposals[tid]
+    padded_template_boxes = self.template_proposals[tid]
+    self.curr_template_corpora = self.template_corpora[tid, :num_temp_props]
+    self.curr_template_boxes = padded_template_boxes[:num_temp_props]
 
     # The Faster R-CNN paper recommends pruning anchors that venture outside
     # the image window at training time and clipping at inference time.
@@ -985,7 +1022,6 @@ class FasterRCNNMetaArch(model.DetectionModel):
     anchors = box_list_ops.concatenate(
         self._first_stage_anchor_generator.generate([(feature_map_shape[1],
                                                       feature_map_shape[2])]))
-   # anchors.set(tf.Print(anchors.get(), [feature_map_shape], message="Anchors ", summarize=9999))
 
     #anchors.set(tf.Print(anchors.get(), [anchors.get()], message="Anchors ", summarize=9999))
 
@@ -1040,6 +1076,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
           [rpn_box_predictor_features],
           num_anchors_per_location,
           scope=self.first_stage_box_predictor_scope)
+    print(box_predictions)
 
     box_encodings = tf.concat(
         box_predictions[box_predictor.BOX_ENCODINGS], axis=1)
@@ -1114,6 +1151,9 @@ class FasterRCNNMetaArch(model.DetectionModel):
     flattened_shape = tf.stack([combined_shape[0] * combined_shape[1]] +
                                combined_shape[2:])
     return tf.reshape(inputs, flattened_shape)
+
+  def set_domain(self, domain):
+    self._feature_extractor.is_source_domain = domain
 
   def postprocess(self, prediction_dict, true_image_shapes):
     """Convert prediction tensors to final detections.
@@ -1358,8 +1398,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
             tf.stack(single_image_proposal_score_sample),
             tf.stack(single_image_num_proposals_sample))
 
-  def _format_groundtruth_data(self, true_image_shapes):
-    """Helper function for preparing groundtruth data for tar   get assignment.
+  def _format_groundtruth_data(self, true_image_shapes, stage='detection'):
+    """Helper function for preparing groundtruth data for target assignment.
 
     In order to be consistent with the model.DetectionModel interface,
     groundtruth boxes are specified in normalized coordinates and classes are
@@ -1369,6 +1409,9 @@ class FasterRCNNMetaArch(model.DetectionModel):
     2) add a background class at class index 0
     3) groundtruth instance masks, if available, are resized to match
        image_shape.
+
+    @Michele: This function can be reused to fetch transcription labels in
+    transcription stage by setting stage='transcription'
 
     Args:
       true_image_shapes: int32 tensor of shape [batch, 3] where each row is
@@ -1401,21 +1444,16 @@ class FasterRCNNMetaArch(model.DetectionModel):
 
     groundtruth_masks_list = self._groundtruth_lists.get(
         fields.BoxListFields.masks)
-
-
-    # TODO(rathodv): Remove mask resizing once the legacy pipeline is deleted.
-    if groundtruth_masks_list is not None and self._resize_masks:
+    if groundtruth_masks_list is not None:
       resized_masks_list = []
       for mask in groundtruth_masks_list:
-
         _, resized_mask, _ = self._image_resizer_fn(
             # Reuse the given `image_resizer_fn` to resize groundtruth masks.
             # `mask` tensor for an image is of the shape [num_masks,
             # image_height, image_width]. Below we create a dummy image of the
             # the shape [image_height, image_width, 1] to use with
             # `image_resizer_fn`.
-            image=tf.zeros(tf.stack([tf.shape(mask)[1],
-                                     tf.shape(mask)[2], 1])),
+            image=tf.zeros(tf.stack([tf.shape(mask)[1], tf.shape(mask)[2], 1])),
             masks=mask)
         resized_masks_list.append(resized_mask)
 
@@ -1430,6 +1468,12 @@ class FasterRCNNMetaArch(model.DetectionModel):
         num_gt = tf.shape(groundtruth_classes)[0]
         groundtruth_weights = tf.ones(num_gt)
         groundtruth_weights_list.append(groundtruth_weights)
+
+    if stage == 'transcription':
+      groundtruth_transcriptions_list = self.groundtruth_lists(
+            fields.BoxListFields.transcription)
+      return (groundtruth_boxlists, groundtruth_classes_with_background_list,
+            groundtruth_masks_list, groundtruth_weights_list, groundtruth_transcriptions_list)
 
     return (groundtruth_boxlists, groundtruth_classes_with_background_list,
             groundtruth_masks_list, groundtruth_weights_list)
@@ -1630,6 +1674,24 @@ class FasterRCNNMetaArch(model.DetectionModel):
     return tf.reshape(decoded_boxes.get(),
                       tf.stack([combined_shape[0], combined_shape[1],
                                 num_classes, 4]))
+
+  """Compute loss weight regularization as described in ... Layer names is a tuple of possible names of endpoint layers in the feature extractor,
+    from which the weights will be fetched"""
+  def loss_weight_regularizer(self):
+    if not self._feature_extractor._has_coupled_domains:
+      return 0.0
+
+    def compute_l2_reg():
+      source_layers, target_layers = self._feature_extractor.decouple_domains(self.endpoints)
+      contributions, l2 = [], tf.contrib.layers.l2_regularizer(1.0)
+      for source_layer, target_layer in zip(source_layers, target_layers):
+        contributions.append(tf.exp(l2(source_layer - target_layer)) - 1)
+        # contributions.append(tf.cast(l2(source_layer - target_layer), dtype=tf.float32))
+      return tf.add_n(contributions)
+
+    return tf.cond(tf.less(tf.train.get_or_create_global_step(), tf.constant(3000, dtype=tf.int64)),
+      lambda: 0.0, compute_l2_reg)
+
 
   def loss(self, prediction_dict, true_image_shapes, scope=None):
     """Compute scalar loss tensors given prediction tensors.

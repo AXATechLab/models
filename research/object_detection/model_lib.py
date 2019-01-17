@@ -282,7 +282,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     preprocessed_images = features[fields.InputDataFields.image]
     # preprocessed_images = tf.Print(preprocessed_images, [features['debug'], features['domain']], message="Domain is", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
-    two_stages = transcription_model != None
+    two_stages = transcription_model is not None
     detection_model.set_domain(features['is_source_domain'])
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
@@ -402,10 +402,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           tf.summary.scalar(var.op.name, var)
       summaries = [] if use_tpu else None
 
-      ''' Debug gradient backprop '''
-      #grads_and_vars = training_optimizer.compute_gradients(total_loss)
-      #total_loss = tf.Print(total_loss, [grads_and_vars[0][0]], message=str(grads_and_vars[0][1].name))
-
       train_detection_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,
@@ -423,7 +419,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
               global_step=None,
               increment_global_step=False,
               learning_rate=None,
-              clip_gradients=clip_gradients_value, # Remove
+              clip_gradients=clip_gradients_value,
               optimizer=transcription_optimizer,
               variables=trainable_variables,
               summaries=summaries,
