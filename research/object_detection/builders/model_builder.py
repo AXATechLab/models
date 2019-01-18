@@ -54,7 +54,7 @@ from object_detection.utils import ops
 
 import sys
 sys.path.append("/notebooks/Transcription/tf-crnn")
-from object_detection.meta_architectures.crnn import CRNN
+from object_detection.meta_architectures.crnn import CRNN, CRNNFlags
 from tf_crnn.config import Params, import_params_from_json
 
 
@@ -354,6 +354,14 @@ def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
     "nb_logprob": crnn_config.nb_logprob,
     "top_paths": crnn_config.top_paths,
   }
+  flags = CRNNFlags(crnn_config.flags.replace_detections_with_groundtruth,
+        crnn_config.flags.train_on_detections_and_groundtruth,
+        crnn_config.flags.compute_only_per_example_metrics,
+        crnn_config.flags.explicitely_recompute_field_features,
+        crnn_config.flags.dump_cropped_fields_to_image_file,
+        crnn_config.flags.metrics_verbose,
+        crnn_config.flags.dump_metrics_input_to_tfrecord,
+        crnn_config.flags.dump_metrics_input_to_tfrecord_using_groundtruth)
   parameters = Params(**dict_params)
 
   crnn_target_assigner = target_assigner.create_target_assigner(
@@ -365,7 +373,7 @@ def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
       use_matmul_gather=False,
       iou_threshold=0.05)
   return CRNN(parameters, detection_model, crnn_target_assigner, crnn_template_assigner,
-    crop_size, start_at_step, backprop_feature_map, backprop_detection)
+    crop_size, start_at_step, backprop_feature_map, backprop_detection, flags)
 
 def _build_faster_rcnn_model(frcnn_config, is_training, add_summaries, meta_architecture='faster_rcnn'):
   """Builds a Faster R-CNN or R-FCN detection model based on the model config.

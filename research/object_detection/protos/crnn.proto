@@ -2,18 +2,28 @@ syntax = "proto2";
 
 package object_detection.protos;
 
-// TODO: Rework this into an actual config file
 message CRNN {
   optional float assigner_iou_threshold = 2 [default = 0.5];
   repeated int32 crop_size = 3;
   optional int32 start_at_step = 4 [default = -1];
-  optional bool backprop_feature_map = 5 [default=false];
-  optional bool backprop_detection = 6 [default=false];
+  optional bool backprop_feature_map = 5 [default = false];
+  optional bool backprop_detection = 6 [default = false];
   optional string alphabet = 7;
   optional string alphabet_decoding = 8;
   optional int32 num_corpora = 9;
-  optional float keep_prob_dropout = 10 [default=0.8];
-  optional int32 nb_logprob = 11 [default=20];
-  optional int32 top_paths = 12 [default=3];
+  optional float keep_prob_dropout = 10 [default = 0.8];
+  optional int32 nb_logprob = 11 [default = 20];
+  optional int32 top_paths = 12 [default = 3];
+  optional CRNNFlags flags = 13;
 
+  message CRNNFlags {
+    optional bool replace_detections_with_groundtruth = 1 [default = false];
+    optional bool train_on_detections_and_groundtruth = 2 [default = false];
+    optional bool compute_only_per_example_metrics = 3 [default = false];
+    optional bool explicitely_recompute_field_features = 4 [default = false];
+    optional bool dump_cropped_fields_to_image_file = 5 [default = false];
+    optional bool metrics_verbose = 6 [default = false];
+    optional bool dump_metrics_input_to_tfrecord = 7 [default = false];
+    optional bool dump_metrics_input_to_tfrecord_using_groundtruth = 8 [default = false];
+  }
 }

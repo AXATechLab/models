@@ -42,6 +42,57 @@ self._metric_names is a list used to establish an arbitrary ordering of the metr
  evaluation of ALL the metrics and stores the result in self._metrics.
 """
 
+class CRNNFlags:
+    def __init__(self, replace_detections_with_groundtruth,
+        train_on_detections_and_groundtruth,
+        compute_only_per_example_metrics,
+        explicitely_recompute_field_features,
+        dump_cropped_fields_to_image_file,
+        metrics_verbose,
+        dump_metrics_input_to_tfrecord,
+        dump_metrics_input_to_tfrecord_using_groundtruth):
+        """ Object initialization.
+        Args:
+            replace_detections_with_groundtruth: Train the CRNN using the groundtruth boxes instead of the
+                detection boxes. The purpose of this operation is rule out the error propagating from
+                the detection model in the training of CRNN.
+                Cannot set it on together with train_on_detections_and_groundtruth.
+            train_on_detections_and_groundtruth: Train the CRNN using both the groundtruth boxes and
+                the detection boxes. The purpose of this operation is to augment the data observed by CRNN
+                at every step, thus speeding up training. Cannot set it on together with
+                replace_detections_with_groundtruth.
+            compute_only_per_example_metrics: Set this flag to print to console metrics after each form
+                is processed (i.e. a CRNN batch). Warning: enabling this operation resets the metric value
+                after each form is seen, meaning that at the end of the whole evaluation all metrics will hold
+                their initial value.
+            explicitely_recompute_field_features: CRNN utilizes tf.image.crop_and_resize internally on the last feature
+                extractor feature map in order to extract features for each field in a form.
+                This has shown to work well in practice. However, with this flag it's possible to explicitely
+                recompute field features by applying tf.image.crop_and_resize on the original input image and
+                running again the feature extractor. Warning: this might require extra memory.
+            dump_cropped_fields_to_image_file: This flag only works in conjunction with explicitely_recompute_field_features.
+                You can use this flag to debug what a detected field looks like on the original image before it is passed
+                through the feature extractor.
+            metrics_verbose: Enabling this flag will print to the console the arguments used to compute the metrics for every
+                field (usually couples of predictions and groundtruth).
+            dump_metrics_input_to_tfrecord: Dump to a tfrecord every detected field that is used to compute metrics.
+                Note: in contrast to dump_cropped_fields_to_image_file, only detected fields that are actually used during
+                metric computation are dumped. This is useful for comparing with other architectures.
+            dump_metrics_input_to_tfrecord_using_groundtruth: Dump to a tfrecord every groundtruth field (image) that is used
+                to compute metrics. This is useful for comparing with other architectures.
+
+        """
+        if replace_detections_with_groundtruth and train_on_detections_and_groundtruth:
+            raise ValueError("""Invalid values for CRNN flags: cannot set replace_detections_with_groundtruth
+                and train_on_detections_and_groundtruth both to TRUE""")
+        self._replace_detections_with_groundtruth = replace_detections_with_groundtruth
+        self._train_on_detections_and_groundtruth = train_on_detections_and_groundtruth
+        self._compute_only_per_example_metrics = compute_only_per_example_metrics
+        self._explicitely_recompute_field_features = explicitely_recompute_field_features
+        self._dump_cropped_fields_to_image_file = dump_cropped_fields_to_image_file
+        self._metrics_verbose = metrics_verbose
+        self._dump_metrics_input_to_tfrecord = dump_metrics_input_to_tfrecord
+        self._dump_metrics_input_to_tfrecord_using_groundtruth = dump_metrics_input_to_tfrecord_using_groundtruth
 
 class CRNN:
 
@@ -66,7 +117,8 @@ class CRNN:
 
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
-        crop_size, start_at_step, backprop_feature_map, backprop_detection):
+        crop_size, start_at_step, backprop_feature_map, backprop_detection, flags):
+        """"""
 
         # The fixed size which all detections will be resized to
         self._crop_size = [int(d) for d in crop_size]
@@ -227,10 +279,10 @@ class CRNN:
                 lambda: gt_boxlists[0].get()))
 
             if mode == tf.estimator.ModeKeys.TRAIN:
-                if self._replace_detections_with_groundtruth:
+                if self.flags._replace_detections_with_groundtruth:
                     normalized_boxlist = normalized_gt_boxlist
                     num_detections = normalized_gt_boxlist.num_boxes()
-                if self._train_on_detections_and_groundtruth:
+                if self.flags._train_on_detections_and_groundtruth:
                     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
                     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
 
@@ -395,7 +447,7 @@ class CRNN:
             sess.run(init)
             for args in preds:
                 sess.run(ops, feed_dict={"arg_{}:0".format(i): args[i] for i in range(len(args))})
-                if self._compute_only_per_example_metrics:
+                if self.flags._compute_only_per_example_metrics:
                     metrics = sess.run(variables)
                     pprint(metrics)
                     eval_vars = [v for v in tf.local_variables() if 'evaluation/' in v.name]
@@ -429,10 +481,10 @@ class CRNN:
         flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
             detection_boxes)    # [batch, height, width, features]
 
-        if self._bypass_crop_and_resize:
+        if self.flags._explicitely_recompute_field_features:
             orig_image = self.input_features[fields.InputDataFields.image]
             flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map_debug(orig_image, detection_boxes, [x * 16 for x in self._crop_size])
-            if self._dump_to_file_crop_and_resize_bypass:
+            if self.flags._dump_cropped_fields_to_image_file:
                 seq_len_inputs = tf.py_func(self.write_to_file, [seq_len_inputs, flattened_detected_feature_maps, self.input_features['debug'],
                     tf.tile(tf.constant([-1], dtype=tf.int64), [tf.shape(flattened_detected_feature_maps)[0]]),
                     tf.tile(tf.constant(['$']), [tf.shape(flattened_detected_feature_maps)[0]]),
@@ -550,7 +602,7 @@ class CRNN:
 
             # Compute Precision
             target_words = encode_groundtruth(matched_transcriptions)
-            if self._metric_verbose:
+            if self.flags._metrics_verbose:
                 all_predictions = print_string_tensor(all_predictions, target_words, "precision")
             precision, precision_op = tf.metrics.accuracy(target_words, all_predictions,
                 name='precision')
@@ -563,7 +615,7 @@ class CRNN:
 
             unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
             target_words = encode_groundtruth(unpadded_gt_transcriptions)
-            if self._metric_verbose:
+            if self.flags._metric_verbose:
                 target_words = print_string_tensor(target_words, padded_best_predictions, "recall")
             recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
                 name='recall')
@@ -573,15 +625,15 @@ class CRNN:
             sampled_matched_transcriptions = tf.boolean_mask(unpadded_gt_transcriptions, indicator)
             sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
 
-            # This code was used to compare this architecture with the 2-staged
-            if self._dump_metrics_input_to_tfrecord:
+            # This code was used to compare this architecture to the 2-staged one
+            if self.flags._dump_metrics_input_to_tfrecord or self._dump_metrics_input_to_tfrecord_using_groundtruth:
                 padded_dets_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
                 padded_dets_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
                 best_dets_boxes = tf.boolean_mask(padded_dets_boxes, indicator)
                 matched_gt_boxes = tf.boolean_mask(gt_boxlist.get(), indicator)
                 dets_corpora = tf.boolean_mask(padded_dets_corpora, indicator)
                 img = self.input_features[fields.InputDataFields.image]
-                if self._dump_metrics_input_to_tfrecord_use_groundtruth:
+                if self.flags._dump_metrics_input_to_tfrecord_using_groundtruth:
                     best_dets_boxes = matched_gt_boxes
                 crops, true_sizes = self.crop_feature_map_debug(img, best_dets_boxes, [32, 256])
                 sampled_matched_predictions = tf.py_func(self.write_to_file, [sampled_matched_predictions, crops,
