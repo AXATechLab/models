@@ -16,33 +16,13 @@ import data_util as du
 from pprint import pprint
 """
 
-Two-streams evaluation:
 
-In order to evaluate the SYNTH and REAL datasets, we need to separate the two from the
-input pipeline (we can only have one eval spec, so the input pipeline has to combine the two
-datasets into one). In order to do this, the input pipeline keeps track of whether the read
-image is SYNTH (also referred to as source) or REAL (also called target). This information
-is in input_features['is_source_metrics'].
-
-The Tensorflow estimator executes the update op of every metric for every example and calls
-the variable read at the end of the input stream. A naive approach would be to condition both
-operations on input_features['is_source_metrics']. However, because of this conditioning, the variable read could
-only return one value depending on the condition, since it is requested only once.
-With this approach, it is not possible to retrieve the metric value. Note that
-the variable read does need to be conditioned otherwise tensorflow forbids the variable read.
-
-My solution mimics the implementation of coco metrics: the update op simply stores the parameters
-of each example evaluation. We maintain two datastructures, one for SYNTH and one for EVAL.
-At variable read, we can finally evaluate metrics and read them without any conditioning.
-Metric evaluation occurs by creating two sessions, one for each stream.
-
-self._metric_names is a list used to establish an arbitrary ordering of the metric keys.
- We need the ordering to decide which is the first metric to evaluate.
- All the other metrics will depend on the first one. The first metric carries out the
- evaluation of ALL the metrics and stores the result in self._metrics.
 """
 
 class CRNNFlags:
+    """ CRNN flags used to add or modify functionalities of CRNN.
+    """
+
     def __init__(self, replace_detections_with_groundtruth,
         train_on_detections_and_groundtruth,
         compute_only_per_example_metrics,
@@ -95,13 +75,56 @@ class CRNNFlags:
         self._dump_metrics_input_to_tfrecord_using_groundtruth = dump_metrics_input_to_tfrecord_using_groundtruth
 
 class CRNN:
+    """ TODO: move this dual evaluation in another class.
 
+    Details on two-streams evaluation implementation:
+
+    In order to evaluate the SYNTH and REAL datasets, we need to separate the two from the
+    input pipeline (we can only have one eval spec, so the input pipeline has to combine the two
+    datasets into one). In order to do this, the input pipeline keeps track of whether the read
+    image is SYNTH or REAL. More precisely, we use a different notation and call them source and
+    target respectively, since no specific concept of neither 'synth' nor 'real' is used and
+    any coupled dataset can be given as sorce and target (the terminology comes from domain
+    adaptation). The variable that keeps the stream type is self.input_features['is_source_metrics'].
+
+    The Tensorflow estimator executes the update op of every metric for every example and calls
+    the variable read at the end of the input stream. A naive approach would be to condition both
+    operations on input_features['is_source_metrics']. However, because of this conditioning, the variable read could
+    only return one value (depending on the condition), since it is requested only once.
+    With this approach, it is not possible to retrieve both metric values. Note that
+    the variable read does need to be the one under the condition because tensorflow forbids any other access
+    to prevent bugs.
+
+    My solution mimics the implementation of coco metrics: the update op merely stores the parameters
+    needed for each example evaluation. We maintain two datastructures, one for source and one for target,
+    which are filled according to input_features['is_source_metrics'].
+    At variable read, we can finally evaluate metrics and read them without any conditioning.
+    A complication is due to the fact that metrics are written in tensorflow and not numpy,
+    as required by this approach.
+    To work around this, metric evaluation occurs by creating two sessions, one for each stream.
+
+    Variables:
+        self._metric_names: A list used to establish an arbitrary ordering of the metric keys.
+            We need the ordering to decide which one is the first metric to evaluate.
+            All the other metrics will depend on the first one. The first metric carries out the
+            evaluation of ALL the metrics and stores the result in self._metrics.
+        self._metrics: A dictionary of numpy metrics:
+            1) 'eval/precision',
+            2) 'eval/recall',
+            3) 'eval/CER',
+            4) 'eval/precision/synth',
+            5) 'eval/recall/synth',
+            6) 'eval/CER/synth',
+    """
     def _get_tables(self, parameters):
         """ Get the alphabet hash tables. This function is called when initializing a session
         for either train or eval streams.
 
         Args:
-            parameters: A Params object, the CRNN parameters
+            parameters: A Params object, a dictionary with the following keys MUST be provided:
+                1) alphabet,
+                2) alphabet_decoding
+
         """
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
@@ -118,27 +141,50 @@ class CRNN:
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
         crop_size, start_at_step, backprop_feature_map, backprop_detection, flags):
-        """"""
+        """Object Initialization.
 
-        # The fixed size which all detections will be resized to
+        Args:
+            parameters: A Params object, it should be constructed with a dictionary containing the
+                following keys:
+                    1) alphabet,
+                    2) alphabet_decoding,
+                    3) num_corpora,
+                    4) keep_prob,
+                    5) nb_logprob,
+                    6) top_paths
+                Please refer to the Params documentation for information on their meaning.
+            detection_model: The detection model. The only supported model is FasterRCNNMetaArch.
+            target_assigner: The assigner used to map detections to groundtruth. In EVAL mode,
+                this is also used to map groundtruth to detections.
+            template_assigner: The assigner used to map detections (or possibly groundtruth) to
+                the template spaces.
+            crop_size: The shape of the field features extracted from the last feature extractor
+                feature map. Please note that the features height on the feature map are always resized
+                to crop_size[0], while the features width is not distorted in any way, with the exception
+                that the extracted crops have double the number of feature cells along the width, in order
+                to maximize the probability that there is a valid path for the ctc_loss. Only afterwards this
+                extracted crop is padded with zeros to crop_size[1]. You
+                can refer to crop_feature_map(). In case the resized resized crops are longer than
+                crop_size[1], padding is not possible and hence the features width is clipped to
+                crop_size[1].
+            start_at_step: The global step value at which the CRNN should start training. The CRNN is
+                as if it were not there until then. During EVAL, this parameter is ignored and the
+                CRNN is always enabled.
+            backprop_feature_map: whether the gradient should flow from the CRNN to the feature
+                extractor.
+            backprop_detection: whether the gradient should flow from CRNN to the detection model.
+                the function connecting CRNN to the detection model is tf.image.crop_and_resize.
+                Therefore, the gradient computation is defined by that function.
+            flags: a CRNNFLags object containing flags that partially modify the behavior of CRNN.
+        """
+
         self._crop_size = [int(d) for d in crop_size]
-
-        # Enable the CRNN at this global step
         self._start_at_step = start_at_step
-
         self.parameters = parameters
-
-        # Access the detection model parameters. TODO: rethink this dependency
         self.detection_model = detection_model
-
-        # whether to let gradient flow into the feature map or the detection layers
         self._backprop_feature_map = backprop_feature_map
         self._backprop_detection = backprop_detection
-
-        # Standard Target assigner used to match groundtruth to detections or viceversa
         self.target_assigner = target_assigner
-
-        # The template assigner used to match detections and groundtruth to the template
         self.template_assigner = template_assigner
 
         # The custom alphabet encoder and decoder
@@ -174,7 +220,7 @@ class CRNN:
         ]
 
         # Being the third stage of the architecture, CRNN takes care of postprocessing stage two.
-        # However, if CRNN is disabled, there's no reason to postprocess the predictions.
+        # However, if CRNN is disabled, there's no need to postprocess detections.
         self.no_postprocessing = {
             fields.DetectionResultFields.detection_boxes : tf.constant(0, dtype=tf.float32),
             fields.DetectionResultFields.detection_scores : tf.constant(0, dtype=tf.float32),
