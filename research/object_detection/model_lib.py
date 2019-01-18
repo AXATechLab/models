@@ -299,7 +299,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           template_ids=features[fields.InputDataFields.template_id])
       if two_stages:
         print("Running E2E architecture")
-        transcription_model.debug_features = features
+        transcription_model.input_features = features
         transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
