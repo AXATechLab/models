@@ -169,11 +169,13 @@ def _add_output_tensor_nodes(postprocessed_tensors,
       detection_fields.detection_classes) + label_id_offset
   else :
     classes = tf.ones_like(scores)
+  corpora = postprocessed_tensors.get(detection_fields.detection_corpora)
   keypoints = postprocessed_tensors.get(detection_fields.detection_keypoints)
   masks = postprocessed_tensors.get(detection_fields.detection_masks)
   num_detections = postprocessed_tensors.get(detection_fields.num_detections)
   transcriptions = postprocessed_tensors.get(transcription_fields.words)
   transcription_score = postprocessed_tensors.get(transcription_fields.score)
+
   outputs = {}
   outputs[detection_fields.detection_boxes] = tf.identity(
       boxes, name=detection_fields.detection_boxes)
@@ -181,6 +183,8 @@ def _add_output_tensor_nodes(postprocessed_tensors,
       scores, name=detection_fields.detection_scores)
   outputs[detection_fields.detection_classes] = tf.identity(
       classes, name=detection_fields.detection_classes)
+  outputs[detection_fields.detection_corpora] = tf.identity(
+      corpora, name=detection_fields.detection_corpora)
   outputs[detection_fields.num_detections] = tf.identity(
       num_detections, name=detection_fields.num_detections)
   outputs[transcription_fields.words] = tf.identity(
@@ -267,9 +271,6 @@ def write_graph_and_checkpoint(inference_graph_def,
     with session.Session() as sess:
       saver = saver_lib.Saver(saver_def=input_saver_def,
                               save_relative_paths=True)
-      # if is_two_stages:
-      #   table_init_op = tf.tables_initializer(name="init_all_tables")
-      #   sess.run(table_init_op)
       saver.restore(sess, trained_checkpoint_prefix)
       saver.save(sess, model_path)
 
@@ -386,10 +387,14 @@ def _export_inference_graph(input_type,
   else:
     output_node_names = ','.join(outputs.keys())
 
-  if two_stages:
-    init_nodes = 'init_all_tables'
-  else:
-    init_nodes = ''
+  # @Michele: workaround for freezing HashTable objects. See https://github.com/tensorflow/tensorflow/issues/8665 (21.01.2019)
+  # key_value_init and key_value_init_1 are supposed to match the initializers of transcription_model.table_str2int and
+  # transcription_model.table_int2str.
+  #
+  # When loading the frozen graph, please remember to run
+  #  sess.run(graph.get_operation_by_name('key_value_init'), graph.get_operation_by_name('key_value_init_1')).
+  output_node_names = output_node_names + ',' + 'key_value_init' + ',' + 'key_value_init_1'
+
   frozen_graph_def = freeze_graph.freeze_graph_with_def_protos(
       input_graph_def=tf.get_default_graph().as_graph_def(),
       input_saver_def=input_saver_def,
@@ -399,7 +404,7 @@ def _export_inference_graph(input_type,
       filename_tensor_name='save/Const:0',
       output_graph=frozen_graph_path,
       clear_devices=True,
-      initializer_nodes=init_nodes)
+      initializer_nodes='')
 
   write_saved_model(saved_model_path, frozen_graph_def,
                     placeholder_tensor, placeholder_tid, outputs, is_two_stages=two_stages)

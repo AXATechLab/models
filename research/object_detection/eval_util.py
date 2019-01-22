@@ -80,6 +80,7 @@ def visualize_detection_results(result_dict,
                                 skip_scores=False,
                                 skip_labels=False,
                                 transcriptions=None,
+                                detection_corpora=None,
                                 keep_image_id_for_visualization_export=False):
   """Visualizes detection results and writes visualizations to image summaries.
 
@@ -158,6 +159,7 @@ def visualize_detection_results(result_dict,
   detection_boundaries = result_dict.get(detection_fields.detection_boundaries)
 
   # Plot groundtruth underneath detections
+  # TODO: not supported
   if show_groundtruth:
     groundtruth_boxes = result_dict[input_fields.groundtruth_boxes]
     groundtruth_keypoints = result_dict.get(input_fields.groundtruth_keypoints)
@@ -166,7 +168,7 @@ def visualize_detection_results(result_dict,
         boxes=groundtruth_boxes,
         scores=None,
         classes=None,
-        transcriptions=transcriptions,
+        transcriptions=None,
         category_index=category_index,
         keypoints=groundtruth_keypoints,
         use_normalized_coordinates=False,
@@ -177,8 +179,11 @@ def visualize_detection_results(result_dict,
       detection_boxes,
       detection_classes,
       detection_scores,
+      -1,
+      None,
       category_index,
       transcriptions=transcriptions,
+      corpora=detection_corpora,
       instance_masks=detection_masks,
       instance_boundaries=detection_boundaries,
       keypoints=detection_keypoints,
