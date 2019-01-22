@@ -260,7 +260,8 @@ class CRNN:
             detections_dict: the postprocessed detections to be integrated in the placeholder result
         Returns:
             A placeholder comforming to a CRNN prediction as far as type goes and with the
-            given detections in it. Structure: [loss, transcription_dict, eval_metric_ops]
+            given detections in it. Structure: [loss, transcription_dict, eval_metric_ops].
+            See predict() for details.
         """
         return lambda : self.no_forward_pass(detections_dict) + [self.no_eval_op]
 
@@ -271,7 +272,7 @@ class CRNN:
             detections_dict: the postprocessed detections to be integrated in the placeholder result
         Returns:
             A placeholder comforming to a CRNN forward pass as far as type goes and with the
-            given detections in it.
+            given detections in it. Structure: [loss, transcription_dict]. See predict() for details.
         """
         transcriptions_dict = {
             'raw_predictions': tf.constant(0, dtype=tf.int64),
@@ -294,18 +295,36 @@ class CRNN:
             mode: train, eval or predict.
         Returns:
             A list of [loss, transcription_dict, eval_metric_ops], where any or all of those
-            values could be a placeholder depending on the mode and run-time conditions.
+            values could be a placeholder depending on the mode and run-time conditions. Failing a
+            condition prevents the lstm layers from running.
 
-            As far as the latter go, there are two checks being performed: one is that
-            the global step is bigger than the given self._start_at_step; the other
-            ensures that there is at least one detection coming from stage 2 that
-            matches a groundtruth object. No lstm layer is run if any of those checks
-            fail.
+            Thus, depending on the mode:
+                1) on TRAIN: only 'loss' is valid. Moreover, there are two run-time checks.
+                    One is testing whether the global step is bigger than or equal to self._start_at_step.
+                    The other controls that there is at least one detection box coming from stage 2
+                    that has a target groundtruth object, assigned by IoU overlap. This last check is
+                    required by the ctc_loss.
+                2) on EVAL: only 'transcription_dict' and 'eval_metric_ops' results are valid. There is only
+                    one run-time check, which controls whether there is at least one detection surviving the
+                    non-max suppression of stage 2 (due to the initial score thresholding).
+                3) on PREDICT: only 'transcription_dict' is valid. No run-time checks are performed.
 
-            Concerning the mode instead:
-                1) on TRAIN: only 'loss' is valid.
-                2) on EVAL: only 'transcription_dict' and 'eval_metric_ops' are valid.
-                3) on PREDICT: only 'transcription_dict' is valid.
+            Details on return values:
+                1) loss: A scalar float32 tensor.
+                2) transcription_dict:
+                    'raw_predictions': raw predictions for debug inspection,
+                    'labels': A string Tensor of groundtruth target labels for each detection. Shape: [num_detections],
+                    'seq_len_inputs': An int64 Tensor with the length of each unpadded sequence for debug inspection. Shape: [num_detections],
+                    'prob': for debug inspection,
+                    'score': A float32 Tensor with confidence score for each transcription. Shape: [num_detections],
+                    'words': list of length self._top_paths with string Tensors constaining the top transcriptions
+                        for each detection. Tensor shape: [num_detections]
+                    'detection_boxes' : A float32 Tensor of shape [num_detections, 4].
+                        These are post-processed detection boxes in normalized coordinates from stage 2,
+                    'detection_scores' : tf.constant(0, dtype=tf.float32),
+                    'detection_corpora' : tf.constant(0, dtype=tf.int32),
+                    'num_detections' : tf.constant(0, dtype=tf.float32)
+
         """
         # Catch root variable scope in order to access variables external to CRNN.
         self._debug_root_variable_scope = tf.get_variable_scope()
@@ -408,6 +427,11 @@ class CRNN:
                 stage="transcription")
 
             def train_forward_pass():
+                """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
+
+                    Returns:
+                        A list of [loss, transcription_dict]
+                """
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
                 # Replace detections with matched detections
@@ -427,6 +451,7 @@ class CRNN:
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
+                """Forward matched detections to the crop_feature_map() function and the lstm layers. EVAL-specific version."""
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
                     padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode)
                 return [self.zero_loss, transcriptions_dict]
@@ -438,7 +463,7 @@ class CRNN:
                 eval_metric_ops = self.no_eval_op
             else:
                 # Check that there is at least one detection (there might be none due to nms)
-                loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0), #tf.constant(False, dtype=tf.bool),
+                loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0),
                     lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
 
                 source_update_op = lambda *args: self._source_predictions.append(args)
@@ -570,8 +595,9 @@ class CRNN:
                 detection_boxes: The detection boxes coming from stage 2. They have been post-processed and assigned to a groundtruth object.
                     A float32 Tensor of shape [num_matched_detections, 4]. It's in normalized coordinates, following tf.image.crop_and_resize() interface.
                 matched_transcriptions: A string Tensor of shape [num_matched_detections], containing the target strings for each detection.
-                detection_scores
-                detection_corpora
+                detection_scores: A float32 Tensor of shape [num_matched_detections], containing the confidence score of each detection.
+                    Not passed to the LSTM network. Just used to build transcription_dict.
+                detection_corpora: An int64 Tensor
                 num_matched_detections
                 mode
             Returns:
