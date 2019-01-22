@@ -217,6 +217,11 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
           (=False) examples.
       scope: name scope.
 
+      @Michele: I'm reusing this function in transcription with the argument
+      stage='transcription'. In transcription the negatives are never subsampled.
+      Moreover, in case the sample is empty the result will be an empty tensor.
+      TODO: rewrite transcription so that it doesn't depend on this function.
+
     Returns:
       sampled_idx_indicator: boolean tensor of shape [N], True for entries which
         are sampled.
@@ -244,9 +249,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         # Only sample from indicated samples
         negative_idx = tf.logical_not(labels)
         positive_idx = tf.logical_and(labels, indicator)
-        #positive_idx = tf.Print(positive_idx, [tf.count_nonzero(positive_idx)], message="Num of Positives ")
         negative_idx = tf.logical_and(negative_idx, indicator)
-       # negative_idx = tf.Print(negative_idx, [tf.count_nonzero(negative_idx)], message="Num of Negatives ")
 
         if stage == 'transcription':
           positive_fraction = 1
@@ -260,7 +263,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         sampled_pos_idx = self.subsample_indicator(positive_idx, max_num_pos)
         num_sampled_pos = tf.reduce_sum(tf.cast(sampled_pos_idx, tf.int32))
         if stage == 'transcription':
-          return tf.cond(tf.equal(num_sampled_pos, 0), 
+          return tf.cond(tf.equal(num_sampled_pos, 0),
             lambda: tf.constant([], dtype=tf.bool), lambda: sampled_pos_idx)
         if batch_size is None:
           negative_positive_ratio = (

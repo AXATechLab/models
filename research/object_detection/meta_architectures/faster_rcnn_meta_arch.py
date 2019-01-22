@@ -685,8 +685,8 @@ class FasterRCNNMetaArch(model.DetectionModel):
     tid = tf.cast(template_ids, dtype=tf.int32)[0]
     num_temp_props = self.num_template_proposals[tid]
     padded_template_boxes = self.template_proposals[tid]
-    self.curr_template_corpora = self.template_corpora[tid, :num_temp_props]
-    self.curr_template_boxes = padded_template_boxes[:num_temp_props]
+    self.current_template_corpora = self.template_corpora[tid, :num_temp_props]
+    self.current_template_boxes = padded_template_boxes[:num_temp_props]
 
     # The Faster R-CNN paper recommends pruning anchors that venture outside
     # the image window at training time and clipping at inference time.
@@ -1410,7 +1410,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
     3) groundtruth instance masks, if available, are resized to match
        image_shape.
 
-    @Michele: This function can be reused to fetch transcription labels in
+    @Michele: This function is reused to also fetch transcription labels in
     transcription stage by setting stage='transcription'
 
     Args:

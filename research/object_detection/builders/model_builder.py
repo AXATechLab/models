@@ -339,9 +339,6 @@ def _build_faster_rcnn_feature_extractor(
 
 
 def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
-  # json_path = crnn_config.json_dir # placeholder for actual values
-  # dict_params = import_params_from_json(json_filename=json_path)
-
   crop_size = crnn_config.crop_size
   start_at_step = crnn_config.start_at_step
   backprop_feature_map = crnn_config.backprop_feature_map

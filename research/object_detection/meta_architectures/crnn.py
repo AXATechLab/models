@@ -14,23 +14,19 @@ import numpy as np # debug
 sys.path.append("/notebooks/text-renderer/generation/")
 import data_util as du
 from pprint import pprint
-"""
-
-
-"""
 
 class CRNNFlags:
-    """ CRNN flags used to add or modify functionalities of CRNN.
-    """
+    """ CRNN flags used to add or modify functionalities of CRNN."""
 
-    def __init__(self, replace_detections_with_groundtruth,
-        train_on_detections_and_groundtruth,
-        compute_only_per_example_metrics,
-        explicitely_recompute_field_features,
-        dump_cropped_fields_to_image_file,
-        metrics_verbose,
-        dump_metrics_input_to_tfrecord,
-        dump_metrics_input_to_tfrecord_using_groundtruth):
+    def __init__(self,
+        replace_detections_with_groundtruth=False,
+        train_on_detections_and_groundtruth=False,
+        compute_only_per_example_metrics=False,
+        explicitely_recompute_field_features=False,
+        dump_cropped_fields_to_image_file=False,
+        metrics_verbose=False,
+        dump_metrics_input_to_tfrecord=False,
+        dump_metrics_input_to_tfrecord_using_groundtruth=False):
         """ Object initialization.
         Args:
             replace_detections_with_groundtruth: Train the CRNN using the groundtruth boxes instead of the
@@ -65,17 +61,34 @@ class CRNNFlags:
         if replace_detections_with_groundtruth and train_on_detections_and_groundtruth:
             raise ValueError("""Invalid values for CRNN flags: cannot set replace_detections_with_groundtruth
                 and train_on_detections_and_groundtruth both to TRUE""")
-        self._replace_detections_with_groundtruth = replace_detections_with_groundtruth
-        self._train_on_detections_and_groundtruth = train_on_detections_and_groundtruth
-        self._compute_only_per_example_metrics = compute_only_per_example_metrics
-        self._explicitely_recompute_field_features = explicitely_recompute_field_features
-        self._dump_cropped_fields_to_image_file = dump_cropped_fields_to_image_file
-        self._metrics_verbose = metrics_verbose
-        self._dump_metrics_input_to_tfrecord = dump_metrics_input_to_tfrecord
-        self._dump_metrics_input_to_tfrecord_using_groundtruth = dump_metrics_input_to_tfrecord_using_groundtruth
+        self.replace_detections_with_groundtruth = replace_detections_with_groundtruth
+        self.train_on_detections_and_groundtruth = train_on_detections_and_groundtruth
+        self.compute_only_per_example_metrics = compute_only_per_example_metrics
+        self.explicitely_recompute_field_features = explicitely_recompute_field_features
+        self.dump_cropped_fields_to_image_file = dump_cropped_fields_to_image_file
+        self.metrics_verbose = metrics_verbose
+        self.dump_metrics_input_to_tfrecord = dump_metrics_input_to_tfrecord
+        self.dump_metrics_input_to_tfrecord_using_groundtruth = dump_metrics_input_to_tfrecord_using_groundtruth
 
 class CRNN:
-    """ TODO: move this dual evaluation in another class.
+    """ Implements the CRNN graph for transcription. The input is the last layer of the feature extactor and
+    the detection boxes coming from stage 2.
+
+    The first operation consists of extracting field features from the last feature extractor map using the detection boxes.
+    The function that operates this is crop_feature_map(). All field features are resized and padded to match the same size,
+    so that they can be stacked up in a batch. The final size is self._crop_size.
+
+    The next operation is feeding the cropped field features to a bidirectional lstm where the sequence axis is the 'width'
+    dimension of the image.
+
+    Note: this implementation does NOT support more than one input image (i.e. the image batch size is 1). Due to the
+    high resolution needed for transcription, one single image with Resnet101 as feature extractor is already quite
+    memory-demanding. In contrast, even though the there is only one input image, CRNN extracts several crops from
+    its feature map, meaning that the preferred way to increase batch size is to increase the image's anumber of field objects
+    to transcribe.
+
+
+    TODO: move this dual evaluation in another class.
 
     Details on two-streams evaluation implementation:
 
@@ -116,7 +129,7 @@ class CRNN:
             5) 'eval/recall/synth',
             6) 'eval/CER/synth',
     """
-    def _get_tables(self, parameters):
+    def _init_tables(self, parameters):
         """ Get the alphabet hash tables. This function is called when initializing a session
         for either train or eval streams.
 
@@ -124,25 +137,25 @@ class CRNN:
             parameters: A Params object, a dictionary with the following keys MUST be provided:
                 1) alphabet,
                 2) alphabet_decoding
+        Returns:
+            A tuple of two HashTables, the first one being the encoder and the second one the decoder.
 
         """
         keys = [c for c in parameters.alphabet.encode('latin1')]
         values = parameters.alphabet_codes
         table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64,
-                    value_dtype=tf.int64), 0)#-1)
-        print(table_str2int.init.name)
+                    value_dtype=tf.int64), 0)#-1) TODO: The default value should not be 0
 
         keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
         values = [c for c in parameters.alphabet_decoding]
         table_int2str = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values), '?')
-        print(table_int2str.init.name)
         return table_str2int, table_int2str
 
 
     def __init__(self, parameters, detection_model, target_assigner, template_assigner,
-        crop_size, start_at_step, backprop_feature_map, backprop_detection, flags):
+        crop_size, start_at_step, backprop_feature_map, backprop_detection, flags=None):
         """Object Initialization.
 
         Args:
@@ -182,18 +195,22 @@ class CRNN:
 
         self._crop_size = [int(d) for d in crop_size]
         self._start_at_step = start_at_step
-        self.parameters = parameters
-        self.detection_model = detection_model
+        self._parameters = parameters
+        self._detection_model = detection_model
         self._backprop_feature_map = backprop_feature_map
         self._backprop_detection = backprop_detection
-        self.target_assigner = target_assigner
-        self.template_assigner = template_assigner
+        self._target_assigner = target_assigner
+        self._template_assigner = template_assigner
+
+        if not flags:
+            flags = CRNNFLags()
+        self.flags = flags
 
         # The custom alphabet encoder and decoder
-        self.table_str2int, self.table_int2str = self._get_tables(parameters)
+        self._table_str2int, self._table_int2str = self._init_tables(parameters)
 
         # Return zero loss in predict and eval mode
-        self.zero_loss = tf.constant(0, dtype=tf.float32)
+        self._zero_loss = tf.constant(0, dtype=tf.float32)
 
         # This null symbol is used to pad predictions or groundtruth to a specific size for
         # metric evaluation (precision and recall). Note that this symbol is not in the alphabet,
@@ -265,35 +282,50 @@ class CRNN:
             fields.TranscriptionResultFields.words: tf.constant([['']], dtype=tf.string)
         }
         transcriptions_dict.update(detections_dict)
-        return [self.zero_loss, transcriptions_dict]
+        return [self._zero_loss, transcriptions_dict]
 
 
     def predict(self, prediction_dict, true_image_shapes, mode):
         """Build the CRNN computational graph.
 
         Args:
-            prediction_dict: the detections coming from stage 2
-            true_image_shapes: the shape of the input image
-            mode: train, eval or predict
+            prediction_dict: the detections coming from stage 2.
+            true_image_shapes: the shape of the input image.
+            mode: train, eval or predict.
         Returns:
-            A placeholder comforming to a CRNN prediction as far as type goes and with the
-            given detections in it.
+            A list of [loss, transcription_dict, eval_metric_ops], where any or all of those
+            values could be a placeholder depending on the mode and run-time conditions.
+
+            As far as the latter go, there are two checks being performed: one is that
+            the global step is bigger than the given self._start_at_step; the other
+            ensures that there is at least one detection coming from stage 2 that
+            matches a groundtruth object. No lstm layer is run if any of those checks
+            fail.
+
+            Concerning the mode instead:
+                1) on TRAIN: only 'loss' is valid.
+                2) on EVAL: only 'transcription_dict' and 'eval_metric_ops' are valid.
+                3) on PREDICT: only 'transcription_dict' is valid.
         """
-        self.debug_root_variable_scope = tf.get_variable_scope()
+        # Catch root variable scope in order to access variables external to CRNN.
+        self._debug_root_variable_scope = tf.get_variable_scope()
         with tf.variable_scope('crnn'):
             predict_fn = partial(self._predict, mode=mode, prediction_dict=prediction_dict,
                 true_image_shapes=true_image_shapes)
+            # CRNN's Condition 1: Global Step condition
             if mode == tf.estimator.ModeKeys.TRAIN:
                 global_step = tf.train.get_or_create_global_step()
                 disabled = tf.less(global_step, self._start_at_step)
             else:
+                # In EVAL mode CRNN is always enabled. This ensures that stage 2 is always post-processed.
+                # The placeholder condition is used to preserve namespaces in EVAL for loading variables.
                 disabled = tf.constant(False, dtype=tf.bool)
             return tf.cond(disabled, self.no_result_fn(self.no_postprocessing),
                 predict_fn, name="StepCond")
 
     def _predict(self, prediction_dict, true_image_shapes, mode):
-        detection_model = self.detection_model
-        # postprocess and unpad detections
+        detection_model = self._detection_model
+        # Postprocess and unpad detections.
         detections_dict = detection_model._postprocess_box_classifier(
             prediction_dict['refined_box_encodings'],
             prediction_dict['class_predictions_with_background'],
@@ -307,7 +339,7 @@ class CRNN:
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0][:num_detections]
-        # Placeholder detection corpora
+        # Placeholder detection corpora.
         detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32)
         padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         # Remove detection classes since text detection is not a multiclass problem
@@ -315,33 +347,39 @@ class CRNN:
 
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
 
-        # Fetch groundtruth
+        # Fetch groundtruth. We maintain both normalized and absolute groundtruth
+        # according to the use.
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
                 stage='transcription')
             normalized_gt_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
-            normalize_gt = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+            normalize_gt_fn = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
                 true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
             # Guard for examples with no objects to detect (box_list_ops throws an exception)
-            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt,
+            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt_fn,
                 lambda: gt_boxlists[0].get()))
 
             if mode == tf.estimator.ModeKeys.TRAIN:
-                if self.flags._replace_detections_with_groundtruth:
+                if self.flags.replace_detections_with_groundtruth:
                     normalized_boxlist = normalized_gt_boxlist
                     num_detections = normalized_gt_boxlist.num_boxes()
-                if self.flags._train_on_detections_and_groundtruth:
+                if self.flags.train_on_detections_and_groundtruth:
                     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
                     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
 
 
         # Template Assignment (boxes with IOU bigger than 0.05 to some template space are mapped to that space)
-        template_boxlist = box_list.BoxList(detection_model.curr_template_boxes)
-        (_, _, _, _, match) = self.template_assigner.assign(normalized_boxlist, template_boxlist)
-        template_corpora = detection_model.curr_template_corpora
+        # TODO: investigate if assignments on normal coordinates are allowed, since this is not the way it was
+        # done on FasterRCNN.
+        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
+        (_, _, _, _, match) = self._template_assigner.assign(normalized_boxlist, template_boxlist)
+        template_corpora = detection_model.current_template_corpora
+        ## A tensor of shape [num_detections]. Each padded_detection_corpora[i] is the corpus type of the detection_i.
+        ## If the detection has no type (i.e. probably a false positive detection), then padded_detection_corpora[i]
+        ## is -1.
         padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
 
-        # The name of the tf.cond operation
+        # The name of CRNN's Condition 2. This condition ensures that the loss is computed on a non-empty batch.
         BATCH_COND = 'BatchCond'
 
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
@@ -351,15 +389,18 @@ class CRNN:
             detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
             detection_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
 
-            (_, cls_weights, _, _, match) = self.target_assigner.assign(detection_boxlist,
+            (_, cls_weights, _, _, match) = self._target_assigner.assign(detection_boxlist,
                 gt_boxlists[0], groundtruth_weights=gt_weights[0])
 
+            # A tensor of shape [num_detections]. Each padded_matched_transcriptions[i] holds the transcription target
+            # string of the detection_i. In case detection_i has no transcription target, self.NULL string is assigned instead.
             padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL)
 
             detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
 
             positive_indicator = match.matched_column_indicator()
             valid_indicator = cls_weights > 0
+            # TODO: rewrite this step so that it's transparent
             sampled_indices = detection_model._second_stage_sampler.subsample(
                 valid_indicator,
                 None,
@@ -380,7 +421,7 @@ class CRNN:
                 num_detections = sampled_boxlist.num_boxes()
                 sparse_code_target = self.str2code(matched_transcriptions)
 
-                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions, #
+                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
                         detection_scores, detection_corpora, num_detections, mode)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
@@ -452,7 +493,7 @@ class CRNN:
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
               dtype=tf.float32,
-              parallel_iterations=self.detection_model._parallel_iterations), crop_widths
+              parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
     def crop_feature_map_debug(self, img, bboxes, crop_size):
       output_height, output_width = crop_size
@@ -474,7 +515,7 @@ class CRNN:
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
               dtype=tf.float32,
-              parallel_iterations=self.detection_model._parallel_iterations), crop_widths
+              parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
     def _first_value_op(self):
         g = tf.Graph()
@@ -483,7 +524,7 @@ class CRNN:
             shapes = [None, (1, None, 4), None, None, (None, 4), None, None]
             names = ["arg_{}".format(i) for i in range(len(types))]
             placeholders = [tf.placeholder(tp, name=n, shape=sh) for tp, n, sh in zip(types, names, shapes)]
-            s2i, i2s = self._get_tables(self.parameters)
+            s2i, i2s = self._init_tables(self._parameters)
             compute_eval_ops = partial(self.compute_eval_ops, string2int=s2i, int2string=i2s)
             metrics = compute_eval_ops(*placeholders)
             ops = [v[1] for v in metrics.values()]
@@ -495,7 +536,7 @@ class CRNN:
             sess.run(init)
             for args in preds:
                 sess.run(ops, feed_dict={"arg_{}:0".format(i): args[i] for i in range(len(args))})
-                if self.flags._compute_only_per_example_metrics:
+                if self.flags.compute_only_per_example_metrics:
                     metrics = sess.run(variables)
                     pprint(metrics)
                     eval_vars = [v for v in tf.local_variables() if 'evaluation/' in v.name]
@@ -519,8 +560,24 @@ class CRNN:
         return self._metrics[self._metric_names[0]]
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
-        detection_scores, detection_corpora, num_detections, mode):
-        detection_model = self.detection_model
+        detection_scores, detection_corpora, num_matched_detections, mode):
+        """ The inner logic of CRNN. First perform crop_feature_map() to get
+            field features. Then reshape the cropped field features and forward to the
+            bidirectional lstm layers.
+
+            Args:
+                rpn_features_to_crop: The last feature map layer of the feature extractor. The name comes from stage 1 (the region proposal).
+                detection_boxes: The detection boxes coming from stage 2. They have been post-processed and assigned to a groundtruth object.
+                    A float32 Tensor of shape [num_matched_detections, 4]. It's in normalized coordinates, following tf.image.crop_and_resize() interface.
+                matched_transcriptions: A string Tensor of shape [num_matched_detections], containing the target strings for each detection.
+                detection_scores
+                detection_corpora
+                num_matched_detections
+                mode
+            Returns:
+
+        """
+        detection_model = self._detection_model
         if not self._backprop_detection:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
@@ -529,16 +586,16 @@ class CRNN:
         flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map(rpn_features_to_crop,
             detection_boxes)    # [batch, height, width, features]
 
-        if self.flags._explicitely_recompute_field_features:
+        if self.flags.explicitely_recompute_field_features:
             orig_image = self.input_features[fields.InputDataFields.image]
             flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map_debug(orig_image, detection_boxes, [x * 16 for x in self._crop_size])
-            if self.flags._dump_cropped_fields_to_image_file:
+            if self.flags.dump_cropped_fields_to_image_file:
                 seq_len_inputs = tf.py_func(self.write_to_file, [seq_len_inputs, flattened_detected_feature_maps, self.input_features['debug'],
                     tf.tile(tf.constant([-1], dtype=tf.int64), [tf.shape(flattened_detected_feature_maps)[0]]),
                     tf.tile(tf.constant(['$']), [tf.shape(flattened_detected_feature_maps)[0]]),
                     seq_len_inputs],
                     seq_len_inputs.dtype)
-            with tf.variable_scope(self.debug_root_variable_scope, reuse=True):
+            with tf.variable_scope(self._debug_root_variable_scope, reuse=True):
                 flattened_detected_feature_maps, self.endpoints = (
                 detection_model._feature_extractor.extract_proposal_features(
                     flattened_detected_feature_maps,
@@ -557,7 +614,7 @@ class CRNN:
         detections_dict[fields.DetectionResultFields.detection_boxes] = detection_boxes
         detections_dict[fields.DetectionResultFields.detection_scores] = detection_scores
         detections_dict[fields.DetectionResultFields.detection_corpora] = detection_corpora
-        detections_dict[fields.DetectionResultFields.num_detections] = tf.cast(num_detections, dtype=tf.float32)
+        detections_dict[fields.DetectionResultFields.num_detections] = tf.cast(num_matched_detections, dtype=tf.float32)
         for k,v in detections_dict.items():
             detections_dict[k] = tf.expand_dims(v, axis=0)
         transcription_dict.update(detections_dict)
@@ -568,7 +625,7 @@ class CRNN:
         """Convert string label to code label"""
         with tf.name_scope('str2code_conversion'):
             if not table_str2int:
-             table_str2int = self.table_str2int
+             table_str2int = self._table_str2int
             splitted = tf.string_split(labels, delimiter='')
             # values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64) # Why the squeeze? it causes a bug
             values_int = tf.reshape(tf.cast(tf.decode_raw(splitted.values, tf.uint8), tf.int64), [-1])
@@ -633,9 +690,9 @@ class CRNN:
             For CER, we simply encode in sparse format the perfect matching.
         """
         if not string2int:
-            string2int = self.table_str2int
+            string2int = self._table_str2int
         if not int2string:
-            int2string = self.table_int2str
+            int2string = self._table_int2str
 
         with tf.name_scope('evaluation'):
             def encode_groundtruth(matched_transcriptions):
@@ -650,7 +707,7 @@ class CRNN:
 
             # Compute Precision
             target_words = encode_groundtruth(matched_transcriptions)
-            if self.flags._metrics_verbose:
+            if self.flags.metrics_verbose:
                 all_predictions = print_string_tensor(all_predictions, target_words, "precision")
             precision, precision_op = tf.metrics.accuracy(target_words, all_predictions,
                 name='precision')
@@ -658,12 +715,12 @@ class CRNN:
 
             # Compute Recall
             detection_boxlist = box_list.BoxList(detection_boxes[0])
-            (_, _, _, _, match) = self.target_assigner.assign(gt_boxlist, detection_boxlist)
+            (_, _, _, _, match) = self._target_assigner.assign(gt_boxlist, detection_boxlist)
             padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
 
             unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
             target_words = encode_groundtruth(unpadded_gt_transcriptions)
-            if self.flags._metric_verbose:
+            if self.flags.metric_verbose:
                 target_words = print_string_tensor(target_words, padded_best_predictions, "recall")
             recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
                 name='recall')
@@ -674,14 +731,14 @@ class CRNN:
             sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
 
             # This code was used to compare this architecture to the 2-staged one
-            if self.flags._dump_metrics_input_to_tfrecord or self._dump_metrics_input_to_tfrecord_using_groundtruth:
+            if self.flags.dump_metrics_input_to_tfrecord or self._dump_metrics_input_to_tfrecord_using_groundtruth:
                 padded_dets_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
                 padded_dets_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
                 best_dets_boxes = tf.boolean_mask(padded_dets_boxes, indicator)
                 matched_gt_boxes = tf.boolean_mask(gt_boxlist.get(), indicator)
                 dets_corpora = tf.boolean_mask(padded_dets_corpora, indicator)
                 img = self.input_features[fields.InputDataFields.image]
-                if self.flags._dump_metrics_input_to_tfrecord_using_groundtruth:
+                if self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
                     best_dets_boxes = matched_gt_boxes
                 crops, true_sizes = self.crop_feature_map_debug(img, best_dets_boxes, [32, 256])
                 sampled_matched_predictions = tf.py_func(self.write_to_file, [sampled_matched_predictions, crops,
@@ -711,7 +768,7 @@ class CRNN:
             return eval_metric_ops
 
     def lstm_layers(self, feature_maps, corpus, seq_len_inputs, mode):
-        parameters = self.parameters
+        parameters = self._parameters
 
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
         predictions_dict = {'prob': logprob,
@@ -720,7 +777,7 @@ class CRNN:
                             }
 
         with tf.name_scope('code2str_conversion'):
-            table_int2str = self.table_int2str
+            table_int2str = self._table_int2str
             sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
                                                                               sequence_length=seq_len_inputs,
                                                                               merge_repeated=False,
