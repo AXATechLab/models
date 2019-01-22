@@ -131,11 +131,13 @@ class CRNN:
         table_str2int = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values, key_dtype=tf.int64,
                     value_dtype=tf.int64), 0)#-1)
+        print(table_str2int.init.name)
 
         keys = tf.cast(parameters.alphabet_decoding_codes, tf.int64)
         values = [c for c in parameters.alphabet_decoding]
         table_int2str = tf.contrib.lookup.HashTable(
                 tf.contrib.lookup.KeyValueTensorInitializer(keys, values), '?')
+        print(table_int2str.init.name)
         return table_str2int, table_int2str
 
 
