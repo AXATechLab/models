@@ -313,7 +313,7 @@ class CRNN:
                 1) loss: A scalar float32 tensor.
                 2) transcription_dict:
                     'raw_predictions': raw predictions for debug inspection,
-                    'labels': A string Tensor of groundtruth target labels for each detection. Shape: [num_detections],
+                    'labels': A string Tensor of groundtruth target labels for each detection and shape: [num_detections],
                     'seq_len_inputs': An int64 Tensor with the length of each unpadded sequence for debug inspection. Shape: [num_detections],
                     'prob': for debug inspection,
                     'score': A float32 Tensor with confidence score for each transcription. Shape: [num_detections],
@@ -321,9 +321,9 @@ class CRNN:
                         for each detection. Tensor shape: [num_detections]
                     'detection_boxes' : A float32 Tensor of shape [num_detections, 4].
                         These are post-processed detection boxes in normalized coordinates from stage 2,
-                    'detection_scores' : tf.constant(0, dtype=tf.float32),
-                    'detection_corpora' : tf.constant(0, dtype=tf.int32),
-                    'num_detections' : tf.constant(0, dtype=tf.float32)
+                    'detection_scores' : A float32 Tensor of shape [num_detections]. The scores of detection boxes,
+                    'detection_corpora' : An int64 Tensor of shape [num_detections]. The corpus type assigned to detection boxes,
+                    'num_detections' : A scalar int64 Tensor, the number of detections.
 
         """
         # Catch root variable scope in order to access variables external to CRNN.
@@ -430,7 +430,8 @@ class CRNN:
                 """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
 
                     Returns:
-                        A list of [loss, transcription_dict]
+                        A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
+                        the loss should be used.
                 """
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
@@ -451,7 +452,11 @@ class CRNN:
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
-                """Forward matched detections to the crop_feature_map() function and the lstm layers. EVAL-specific version."""
+                """Forward matched detections to the crop_feature_map() function and the lstm layers. EVAL-specific version.
+
+                    Returns:
+                        A list [self._zero_loss, transcription_dict]. transcription_dict is the only valid return value.
+                """
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
                     padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode)
                 return [self.zero_loss, transcriptions_dict]
@@ -462,10 +467,12 @@ class CRNN:
                     lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
                 eval_metric_ops = self.no_eval_op
             else:
-                # Check that there is at least one detection (there might be none due to nms)
+                # Check that there is at least one detection (there might be none due to nms even though there is no assignment)
                 loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0),
                     lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
 
+                # The update ops run for every image example. They merely store the args of compute_eval_ops()
+                # in python lists. There's one op per eval stream.
                 source_update_op = lambda *args: self._source_predictions.append(args)
                 target_update_op = lambda *args: self._target_predictions.append(args)
                 common_args = [
@@ -484,6 +491,7 @@ class CRNN:
                 first_var = tf.py_func(self._first_value_op, [], tf.float32)
                 eval_metric_ops = {self._metric_names[0]: (first_var, update_op)}
 
+                # Compute all metrics only once.
                 with tf.control_dependencies([first_var]):
                     for metric in self._metric_names[1:]:
                         eval_metric_ops[metric] = (tf.py_func(lambda m: self._metrics[m.decode('latin1')], [metric], tf.float32),
@@ -499,9 +507,31 @@ class CRNN:
             self.no_result_fn(detections_dict), name=BATCH_COND)
 
     def crop_feature_map(self, features_to_crop, bboxes):
-      output_height, output_width = self._crop_size
+        """ Function that extracts field features from the last feature extractor map.
+            This function is backed by tf.image.crop_and_resize.
 
-      def _keep_aspect_ratio_crop_and_resize(args):
+            The main advantage with respect to tf.image.crop_and_resize is the minimal
+            distortion on height and width.
+            Indeed, the width of the bboxes is kept as-is in the final crop. The height
+            is instead distorted to fixed value (self._crop_size[0]).
+
+            The second operation this function has is to pad crops to self._crop_size[1].
+            There is an exception for boxes that are longer than that value. In that case
+            The width is not kept the same but it's distorted to self._crop_size[1].
+
+
+
+            Args:
+                features_to_crop: The last feature map layer. A float32 Tensor of shape
+                    [1, h, w, D].
+                bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+            Returns:
+                A float 32 Tensor of shape
+                    [num_detections, self._crops_size[0], self._crop_size[1], D]
+        """
+        output_height, output_width = self._crop_size
+
+        def _keep_aspect_ratio_crop_and_resize(args):
         bbox, crop_width = args
         fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
           tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
@@ -509,18 +539,28 @@ class CRNN:
           [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
         return padded_crop
 
-      num_feat_map_cells = tf.cast(tf.shape(features_to_crop)[2], dtype=tf.float32) * (bboxes[:, 3] - bboxes[:, 1])
-      crop_widths = tf.math.minimum(tf.cast(tf.round(2.0 * num_feat_map_cells), tf.int32),
+        num_feat_map_cells = tf.cast(tf.shape(features_to_crop)[2], dtype=tf.float32) * (bboxes[:, 3] - bboxes[:, 1])
+        crop_widths = tf.math.minimum(tf.cast(tf.round(2.0 * num_feat_map_cells), tf.int32),
         output_width)
-      crop_widths = tf.math.maximum(crop_widths, 1)
+        crop_widths = tf.math.maximum(crop_widths, 1)
 
-      return shape_utils.static_or_dynamic_map_fn(
+        return shape_utils.static_or_dynamic_map_fn(
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
               dtype=tf.float32,
               parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
     def crop_feature_map_debug(self, img, bboxes, crop_size):
+        """ Function that extracts field features from the last feature extractor map.
+
+            Args:
+                features_to_crop: The last feature map layer. A float32 Tensor of shape
+                    [1, h, w, D].
+                bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+            Returns:
+                A float 32 Tensor of shape
+                    [num_detections, self._crops_size[0], self._crop_size[1], D]
+        """
       output_height, output_width = crop_size
 
       def _keep_aspect_ratio_crop_and_resize(args):
