@@ -157,9 +157,6 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
             tf.contrib.data.batch_and_drop_remainder(batch_size))
       datasets[i] = dataset.prefetch(input_reader_config.num_prefetch_batches)
 
-    # if not is_eval and len(datasets) == 1: # This check is probably useless, it's just to keep variable names as before
-    #   return datasets[0]
-
     is_source_domain = tf.Variable(False, name="is_source_domain")
     is_source_metrics = tf.Variable(False, name="is_source_metrics")
     iters = [dataset.make_initializable_iterator() for dataset in datasets]

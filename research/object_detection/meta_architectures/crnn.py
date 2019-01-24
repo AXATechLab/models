@@ -129,7 +129,7 @@ class CRNN:
             5) 'eval/recall/synth',
             6) 'eval/CER/synth',
     """
-    def _init_tables(self, parameters):
+    def _build_tables(self, parameters):
         """ Get the alphabet hash tables. This function is called when initializing a session
         for either train or eval streams.
 
@@ -207,7 +207,7 @@ class CRNN:
         self.flags = flags
 
         # The custom alphabet encoder and decoder
-        self._table_str2int, self._table_int2str = self._init_tables(parameters)
+        self._table_str2int, self._table_int2str = self._build_tables(parameters)
 
         # Return zero loss in predict and eval mode
         self._zero_loss = tf.constant(0, dtype=tf.float32)
@@ -459,7 +459,7 @@ class CRNN:
                 """
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
                     padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode)
-                return [self.zero_loss, transcriptions_dict]
+                return [self._zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
                 # Check that at least one detection matches groundtruth
@@ -500,7 +500,7 @@ class CRNN:
             return [loss, predictions_dict, eval_metric_ops]
 
 
-        predict_fn = lambda : [self.zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
+        predict_fn = lambda : [self._zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
                 padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode),
                 self.no_eval_op]
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
@@ -516,15 +516,14 @@ class CRNN:
             is instead distorted to fixed value (self._crop_size[0]).
 
             The second operation this function has is to pad crops to self._crop_size[1].
-            There is an exception for boxes that are longer than that value. In that case
+            There is an exception for boxes that are longer than self._crop_size[1]. In that case
             The width is not kept the same but it's distorted to self._crop_size[1].
-
-
 
             Args:
                 features_to_crop: The last feature map layer. A float32 Tensor of shape
                     [1, h, w, D].
                 bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+                    A float32 Tensor of shape [num_detections, 4].
             Returns:
                 A float 32 Tensor of shape
                     [num_detections, self._crops_size[0], self._crop_size[1], D]
@@ -532,12 +531,12 @@ class CRNN:
         output_height, output_width = self._crop_size
 
         def _keep_aspect_ratio_crop_and_resize(args):
-        bbox, crop_width = args
-        fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
-          tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
-        padded_crop = tf.pad(fixed_height_crop[0],
-          [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
-        return padded_crop
+            bbox, crop_width = args
+            fixed_height_crop = tf.image.crop_and_resize(features_to_crop,
+              tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
+            padded_crop = tf.pad(fixed_height_crop[0],
+              [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
+            return padded_crop
 
         num_feat_map_cells = tf.cast(tf.shape(features_to_crop)[2], dtype=tf.float32) * (bboxes[:, 3] - bboxes[:, 1])
         crop_widths = tf.math.minimum(tf.cast(tf.round(2.0 * num_feat_map_cells), tf.int32),
@@ -550,52 +549,72 @@ class CRNN:
               dtype=tf.float32,
               parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
-    def crop_feature_map_debug(self, img, bboxes, crop_size):
+    def crop_feature_map_keep_aspect_ratio(self, img, bboxes, crop_size):
         """ Function that extracts field features from the last feature extractor map.
+            This function is backed by tf.image.crop_and_resize.
+
+            The only difference with crop_feature_map() is in how the width is computed.
+            In this case we keep the aspect ratio of the bounding box after changing the
+            height to self._crop_size[0]. Note that crop_feature_map() has proved to work
+            better in terms of sequence length with feature maps that have high resolution.
 
             Args:
                 features_to_crop: The last feature map layer. A float32 Tensor of shape
                     [1, h, w, D].
                 bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+                    A float32 Tensor of shape [num_detections, 4].
             Returns:
                 A float 32 Tensor of shape
                     [num_detections, self._crops_size[0], self._crop_size[1], D]
         """
-      output_height, output_width = crop_size
+        output_height, output_width = crop_size
 
-      def _keep_aspect_ratio_crop_and_resize(args):
-        bbox, crop_width = args
-        fixed_height_crop = tf.image.crop_and_resize(img,
-          tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
-        padded_crop = tf.pad(fixed_height_crop[0],
-          [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
-        return padded_crop
+        def _keep_aspect_ratio_crop_and_resize(args):
+            bbox, crop_width = args
+            fixed_height_crop = tf.image.crop_and_resize(img,
+              tf.expand_dims(bbox, axis=0), [0], [output_height, crop_width])
+            padded_crop = tf.pad(fixed_height_crop[0],
+              [[0, 0], [0, output_width - crop_width], [0, 0]], "CONSTANT")
+            return padded_crop
 
-      aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
-      crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
+        aspect_ratios = (bboxes[:, 3] - bboxes[:, 1]) / (bboxes[:, 2] - bboxes[:, 0])
+        crop_widths = tf.math.minimum(tf.cast(tf.round(aspect_ratios * output_height), tf.int32),
         output_width)
-      crop_widths = tf.math.maximum(crop_widths, 1)
+        crop_widths = tf.math.maximum(crop_widths, 1)
 
-      return shape_utils.static_or_dynamic_map_fn(
+        return shape_utils.static_or_dynamic_map_fn(
               _keep_aspect_ratio_crop_and_resize,
               elems=[bboxes, crop_widths],
               dtype=tf.float32,
               parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
     def _first_value_op(self):
+        """A function embedded in a tf.py_func() node, performing metric computation. It starts two sessions,
+            one for each eval stream.
+
+        Returns:
+            The variable or tensor containing the value of self._metric_names[0] metric.
+        """
         g = tf.Graph()
         with g.as_default():
+            # Build the metric computation graph.
             types = [tf.string, tf.float32, tf.string, tf.int64, tf.float32, tf.string, tf.int64]
             shapes = [None, (1, None, 4), None, None, (None, 4), None, None]
             names = ["arg_{}".format(i) for i in range(len(types))]
             placeholders = [tf.placeholder(tp, name=n, shape=sh) for tp, n, sh in zip(types, names, shapes)]
-            s2i, i2s = self._init_tables(self._parameters)
-            compute_eval_ops = partial(self.compute_eval_ops, string2int=s2i, int2string=i2s)
-            metrics = compute_eval_ops(*placeholders)
+            s2i, i2s = self._build_tables(self._parameters)
+            _build_metric_graph = partial(self._build_metric_graph, string2int=s2i, int2string=i2s)
+            metrics = _build_metric_graph(*placeholders)
             ops = [v[1] for v in metrics.values()]
             variables = {k: var[0] for k, var in metrics.items()}
 
         def run_session(sess, preds):
+            """ Run metric update operations for all stored examples.
+
+            Args:
+                sess: A tf.Session() on the metric graph.
+                preds: A list of numpy arrays of compute_eval_ops() arguments.
+            """
             sess.run([s2i.init, i2s.init])
             init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
             sess.run(init)
@@ -625,20 +644,22 @@ class CRNN:
         return self._metrics[self._metric_names[0]]
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
-        detection_scores, detection_corpora, num_matched_detections, mode):
+        detection_scores, detection_corpora, num_detections, mode):
         """ The inner logic of CRNN. First perform crop_feature_map() to get
             field features. Then reshape the cropped field features and forward to the
             bidirectional lstm layers.
 
             Args:
                 rpn_features_to_crop: The last feature map layer of the feature extractor. The name comes from stage 1 (the region proposal).
+                    A float32 Tensor of shape [1, h, w, D].
                 detection_boxes: The detection boxes coming from stage 2. They have been post-processed and assigned to a groundtruth object.
-                    A float32 Tensor of shape [num_matched_detections, 4]. It's in normalized coordinates, following tf.image.crop_and_resize() interface.
-                matched_transcriptions: A string Tensor of shape [num_matched_detections], containing the target strings for each detection.
-                detection_scores: A float32 Tensor of shape [num_matched_detections], containing the confidence score of each detection.
+                    A float32 Tensor of shape [num_detections, 4]. It's in normalized coordinates, following tf.image.crop_and_resize() interface.
+                matched_transcriptions: A string Tensor of shape [num_detections], containing the target strings for each detection.
+                detection_scores: A float32 Tensor of shape [num_detections], containing the confidence score of each detection.
                     Not passed to the LSTM network. Just used to build transcription_dict.
-                detection_corpora: An int64 Tensor
-                num_matched_detections
+                detection_corpora: An int64 Tensor of shape [num_detections]. Stores the assigned type to each detection.
+                num_detections: A scalar int64 Tensor. The number of detection boxes coming from stage 2. Note that there usually is pre-processing before calling
+                    this function, therefore (in TRAIN mode) this is the number of detections that have a transcription target.
                 mode
             Returns:
 
@@ -654,7 +675,11 @@ class CRNN:
 
         if self.flags.explicitely_recompute_field_features:
             orig_image = self.input_features[fields.InputDataFields.image]
-            flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map_debug(orig_image, detection_boxes, [x * 16 for x in self._crop_size])
+            downscale = self._detection_model._feature_extractor._first_stage_features_stride
+            # Here we don't use crop_feature_map() because there is no reason to keep the width
+            # of detection unchanged.
+            flattened_detected_feature_maps, seq_len_inputs = self.crop_feature_map_keep_aspect_ratio(orig_image, detection_boxes,
+                [x * downscale for x in self._crop_size])
             if self.flags.dump_cropped_fields_to_image_file:
                 seq_len_inputs = tf.py_func(self.write_to_file, [seq_len_inputs, flattened_detected_feature_maps, self.input_features['debug'],
                     tf.tile(tf.constant([-1], dtype=tf.int64), [tf.shape(flattened_detected_feature_maps)[0]]),
@@ -680,7 +705,7 @@ class CRNN:
         detections_dict[fields.DetectionResultFields.detection_boxes] = detection_boxes
         detections_dict[fields.DetectionResultFields.detection_scores] = detection_scores
         detections_dict[fields.DetectionResultFields.detection_corpora] = detection_corpora
-        detections_dict[fields.DetectionResultFields.num_detections] = tf.cast(num_matched_detections, dtype=tf.float32)
+        detections_dict[fields.DetectionResultFields.num_detections] = tf.cast(num_detections, dtype=tf.float32)
         for k,v in detections_dict.items():
             detections_dict[k] = tf.expand_dims(v, axis=0)
         transcription_dict.update(detections_dict)
@@ -701,6 +726,13 @@ class CRNN:
             return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
 
     def loss(self, predictions_dict, sparse_code_target):
+        """The ctc loss.
+
+        Args:
+            predictions_dict: See predict() for details.
+            sparse_code_target:
+
+        """
         # Alphabet and codes
         seq_len_inputs = predictions_dict['seq_len_inputs']
 
@@ -720,7 +752,21 @@ class CRNN:
         return loss_ctc
 
 
-    def write_to_file(self, dummy, dt_crops, source_id, corpora, transcriptions, true_sizes):
+    def write_to_file(self, x, dt_crops, source_id, corpora, transcriptions, true_sizes):
+        """ Debug function to dump image tensors to file. To embed in a tf.py_func() node.
+
+        Args:
+            x: This function behaves like tf.identity(). This Tensor is returned with
+                no changes.
+            dt_crops: A float32 image Tensor of shape [B, H, W, C].
+            source_id: The source id of the original input image. A scalar string Tensor.
+            corpora: An int64 Tensor of shape [B]. The corpus types of the images.
+            transcriptions: A string Tensor of shape [B]. The groundtruth content of the image Tensors.
+            true_sizes: An int64 Tensor of shape [B]. The unpadded widths of the images.
+
+        Returns:
+            A Tensor identical to x.
+        """
         # TODO: replace hard-coded path with parameter. Example of path: /notebooks/Detection/workspace/models/E2E/cer_48/zoom_in/tf1.12/predictions/
         path = '/reports/{}.tfrecord'.format(source_id)
         print("!!! Write to file: The hard coded path is", path)
@@ -729,15 +775,65 @@ class CRNN:
             crop = dt_crops[i]
             du.write_old_tfrecord_example(debug_writer, crop[:, :true_sizes[i]], corpora[i], transcriptions[i])
         debug_writer.close()
-        return dummy
+        return x
 
-    def print_string_tensor(source, dest, mess, summar=9999):
+    def print_compare_string_tensors(source, dest, mess, summar=9999):
+        """Print two string tensors side by side to the console.
+
+        Args:
+            source: A string Tensor of shape [N].
+            dest: A string Tensor of shape [N].
+            mess: A string message.
+
+        Returns:
+            A Tensor identical to the source.
+        """
         tens = tf.concat([tf.expand_dims(x, axis=1) for x in [source, dest]], axis=1)
         return tf.map_fn(lambda t: tf.Print(t[0],[*tf.split(t, 2, axis=0), tf.shape(tens)[0]], message=mess, summarize=summar), tens)
 
-    def compute_eval_ops(self, words, detection_boxes, matched_transcriptions, dt_positive_indices, gt_boxes, gt_transcriptions,
-        debug_corpora=None, string2int=None, int2string=None):
-        """ TODO: Update comments
+    def _re_encode_groundtruth(self, matched_transcriptions):
+        matched_codes = self.str2code(matched_transcriptions`, string2int)
+        seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32), #array of labels length
+                         minlength= tf.shape(matched_transcriptions)[0])
+        target_chars = int2string.lookup(tf.cast(matched_codes, tf.int64))
+        return get_words_from_chars(target_chars.values, seq_lengths_labels)
+
+    def compute_precision(self, words, target_words):
+        target_words = self._re_encode_groundtruth(target_words)
+        if self.flags.metrics_verbose:
+            words = print_compare_string_tensors(words, target_words, "precision")
+        return tf.metrics.accuracy(words, target_words, name='precision')
+
+    def compute_recall(self, groundtruth_boxlist, detection_boxlist):
+        top_words = detection_boxlist.get_field(fields.BoxListFields.transcription)
+        groundtruth_text = groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+        (_, _, _, _, match) = self._target_assigner.assign(groundtruth_boxlist, detection_boxlist)
+        assigned_top_words = match.gather_based_on_match(top_words, self.NULL, self.NULL)
+        groundtruth_boxlist.add_field(fields.BoxListFields.transcription, assigned_top_words)
+        groundtruth_text = self._re_encode_groundtruth(groundtruth_text)
+        if self.flags.metrics_verbose:
+            groundtruth_text = print_compare_string_tensors(groundtruth_text, assigned_top_words, "recall")
+        return tf.metrics.accuracy(groundtruth_text, assigned_top_words, name='recall'), match
+
+    def compute_CER(self, matched_predicted_text, matched_groundtruth_text):
+        # Compute CER on non-empty vectors (for empty images). Both vertors are empty or not empty.
+        # In the first case, we insert a self.NULL in both so that CER is 0.
+        matched_predicted_text = tf.cond(tf.shape(matched_predicted_text)[0] < 1,
+            lambda: tf.constant([self.NULL], dtype=tf.string),
+            lambda: matched_predicted_text)
+        matched_groundtruth_text = tf.cond(tf.shape(matched_groundtruth_text)[0] < 1,
+            lambda: tf.constant([self.NULL], dtype=tf.string),
+            lambda: matched_groundtruth_text)
+        sparse_code_pred = self.str2code(matched_predicted_text, string2int)
+        sparse_code_target = self.str2code(matched_groundtruth_text, string2int)
+        return tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
+             tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
+
+    def _build_metric_graph(self, words, detection_boxes, target_words, dt_positive_indices, groundtruth_boxes, padded_groundtruth_text,
+        debug_corpora, string2int=None, int2string=None):
+        """
+
+        TODO: Update comments
             Compute Precision, Recall and Character Error Rate (CER).
 
             All metrics are backed by tf.accuracy. We devise matchings to compute the metrics.
@@ -761,70 +857,40 @@ class CRNN:
             int2string = self._table_int2str
 
         with tf.name_scope('evaluation'):
-            def encode_groundtruth(matched_transcriptions):
-                matched_codes = self.str2code(matched_transcriptions, string2int)
-                seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32), #array of labels length
-                                 minlength= tf.shape(matched_transcriptions)[0])
-                target_chars = int2string.lookup(tf.cast(matched_codes, tf.int64))
-                return get_words_from_chars(target_chars.values, seq_lengths_labels)
+            top_words = words[0]
+            precision, precision_op = self.compute_precision(top_words, target_words)
 
-            gt_boxlist = box_list.BoxList(gt_boxes)
-            all_predictions = words[0]
-
-            # Compute Precision
-            target_words = encode_groundtruth(matched_transcriptions)
-            if self.flags.metrics_verbose:
-                all_predictions = print_string_tensor(all_predictions, target_words, "precision")
-            precision, precision_op = tf.metrics.accuracy(target_words, all_predictions,
-                name='precision')
-
-
-            # Compute Recall
+            groundtruth_boxlist = box_list.BoxList(groundtruth_boxes)
+            groundtruth_text = padded_groundtruth_text[:groundtruth_boxlist.num_boxes()]
+            groundtruth_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, groundtruth_text)
             detection_boxlist = box_list.BoxList(detection_boxes[0])
-            (_, _, _, _, match) = self._target_assigner.assign(gt_boxlist, detection_boxlist)
-            padded_best_predictions = match.gather_based_on_match(all_predictions, self.NULL, self.NULL)
-
-            unpadded_gt_transcriptions = gt_transcriptions[:gt_boxlist.num_boxes()]
-            target_words = encode_groundtruth(unpadded_gt_transcriptions)
-            if self.flags.metric_verbose:
-                target_words = print_string_tensor(target_words, padded_best_predictions, "recall")
-            recall, recall_op = tf.metrics.accuracy(target_words, padded_best_predictions,
-                name='recall')
+            detection_boxlist.add_field(fields.BoxListFields.transcription, top_words)
+            recall, recall_op, match =  self.compute_recall(groundtruth_boxlist, detection_boxlist)
 
             # Compute Character Error Rate
             indicator = match.matched_column_indicator()
-            sampled_matched_transcriptions = tf.boolean_mask(unpadded_gt_transcriptions, indicator)
-            sampled_matched_predictions = tf.boolean_mask(padded_best_predictions, indicator)
+            matched_groundtruth_boxlist = box_list_ops.boolean_mask(groundtruth_boxlist, indicator)
+            matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+            matched_predicted_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
 
             # This code was used to compare this architecture to the 2-staged one
-            if self.flags.dump_metrics_input_to_tfrecord or self._dump_metrics_input_to_tfrecord_using_groundtruth:
-                padded_dets_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
-                padded_dets_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
-                best_dets_boxes = tf.boolean_mask(padded_dets_boxes, indicator)
-                matched_gt_boxes = tf.boolean_mask(gt_boxlist.get(), indicator)
-                dets_corpora = tf.boolean_mask(padded_dets_corpora, indicator)
-                img = self.input_features[fields.InputDataFields.image]
+            if self.flags.dump_metrics_input_to_tfrecord or self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
+                assigned_detection_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
+                assigned_detection_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
+                matched_detection_boxes = tf.boolean_mask(assigned_detection_boxes, indicator)
+                matched_detection_corpora = tf.boolean_mask(assigned_detection_corpora, indicator)
+                matched_groundtruth_boxes = matched_groundtruth_boxlist.get()
+                image = self.input_features[fields.InputDataFields.image]
                 if self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
-                    best_dets_boxes = matched_gt_boxes
-                crops, true_sizes = self.crop_feature_map_debug(img, best_dets_boxes, [32, 256])
-                sampled_matched_predictions = tf.py_func(self.write_to_file, [sampled_matched_predictions, crops,
-                    self.input_features['debug'], dets_corpora, sampled_matched_transcriptions, true_sizes],
-                        sampled_matched_predictions.dtype)
+                    matched_detection_boxes = matched_groundtruth_boxes
+                crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, matched_detection_boxes, [32, 256])
+                matched_predicted_text = tf.py_func(self.write_to_file, [matched_predicted_text, crops,
+                    self.input_features['debug'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
+                        matched_predicted_text.dtype)
 
-            # Compute CER on non-empty vectors
-            sampled_matched_transcriptions = tf.cond(tf.shape(sampled_matched_transcriptions)[0] < 1,
-                lambda: tf.constant([self.NULL], dtype=tf.string),
-                lambda: sampled_matched_transcriptions)
-            sampled_matched_predictions = tf.cond(tf.shape(sampled_matched_predictions)[0] < 1,
-                lambda: tf.constant([self.NULL], dtype=tf.string),
-                lambda: sampled_matched_predictions)
 
-            sparse_code_target = self.str2code(sampled_matched_transcriptions, string2int)
-            sparse_code_pred = self.str2code(sampled_matched_predictions, string2int)
-            db0 = [sparse_code_pred.indices, sparse_code_pred.values, sparse_code_pred.dense_shape]
-            db = [sparse_code_target.indices, sparse_code_target.values, sparse_code_target.dense_shape]
-            CER, CER_op = tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
-                 tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
+            CER, CER_op = self.compute_CER()
+
 
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
