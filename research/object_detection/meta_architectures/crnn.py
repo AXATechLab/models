@@ -311,7 +311,7 @@ class CRNN:
 
             Details on return values:
                 1) loss: A scalar float32 tensor.
-                2) transcription_dict:
+                2) transcription_dict: A dictionary:
                     'raw_predictions': raw predictions for debug inspection,
                     'labels': A string Tensor of groundtruth target labels for each detection and shape: [num_detections],
                     'seq_len_inputs': An int64 Tensor with the length of each unpadded sequence for debug inspection. Shape: [num_detections],
@@ -324,6 +324,13 @@ class CRNN:
                     'detection_scores' : A float32 Tensor of shape [num_detections]. The scores of detection boxes,
                     'detection_corpora' : An int64 Tensor of shape [num_detections]. The corpus type assigned to detection boxes,
                     'num_detections' : A scalar int64 Tensor, the number of detections.
+                3) eval_metric_ops: A float32 metric dictionary:
+                    'eval/precision': precision for source stream,
+                    'eval/recall': recall for source stream,
+                    'eval/CER': CER for source stream,
+                    'eval/precision/synth': precision for source stream,
+                    'eval/recall/synth': recall for target stream,
+                    'eval/CER/synth': CER for target stream,
 
         """
         # Catch root variable scope in order to access variables external to CRNN.
@@ -479,7 +486,6 @@ class CRNN:
                     predictions_dict['words'],
                     predictions_dict['detection_boxes'],
                     padded_matched_transcriptions,
-                    sampled_indices,
                     normalized_gt_boxlist.get(),
                     gt_transcriptions[0],
                     padded_detection_corpora]
@@ -598,8 +604,8 @@ class CRNN:
         g = tf.Graph()
         with g.as_default():
             # Build the metric computation graph.
-            types = [tf.string, tf.float32, tf.string, tf.int64, tf.float32, tf.string, tf.int64]
-            shapes = [None, (1, None, 4), None, None, (None, 4), None, None]
+            types = [tf.string, tf.float32, tf.string, tf.float32, tf.string, tf.int64]
+            shapes = [None, (1, None, 4), None, (None, 4), None, None]
             names = ["arg_{}".format(i) for i in range(len(types))]
             placeholders = [tf.placeholder(tp, name=n, shape=sh) for tp, n, sh in zip(types, names, shapes)]
             s2i, i2s = self._build_tables(self._parameters)
@@ -792,19 +798,69 @@ class CRNN:
         return tf.map_fn(lambda t: tf.Print(t[0],[*tf.split(t, 2, axis=0), tf.shape(tens)[0]], message=mess, summarize=summar), tens)
 
     def _re_encode_groundtruth(self, matched_transcriptions):
-        matched_codes = self.str2code(matched_transcriptions`, string2int)
-        seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32), #array of labels length
+        """Re-encode groundtruth. TODO: rethink this step."""
+        matched_codes = self.str2code(matched_transcriptions, string2int)
+        # array of labels length
+        seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32),
                          minlength= tf.shape(matched_transcriptions)[0])
         target_chars = int2string.lookup(tf.cast(matched_codes, tf.int64))
         return get_words_from_chars(target_chars.values, seq_lengths_labels)
 
     def compute_precision(self, words, target_words):
+        """ Compute precision, i.e. the proportion of detection boxes whose transcription is matches the groundtruth. This metric is quite
+        coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
+        which measures accuracy at character level.
+
+        Details on how this is computed:
+            We rely on tf.metrics.accuracy, giving as input the highest confidence text prediction per detection and the corresponding vector of
+            target text (assigned according to highest IoU). tf.metrics.accuracy computes
+            the ratio of matching vector rows over the size of the vector. The size of the vector is the same
+            as num_detections. A matching row is equivalent to a True Positive. An unmatched row is equivalent
+            to a False Positive (and a False Negative). Therefore, here we are computing matched_rows / (matched_rows +
+            + unmatched_rows) = True Positives / (True Positives + False Positives). Since we include in this computation
+            all True Positives and all False Positives, this quantity is indeed precision.
+
+        Args:
+            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
+                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
+            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
+                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+
+        Returns:
+            a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
+            detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
+            predictions.
+        """
         target_words = self._re_encode_groundtruth(target_words)
         if self.flags.metrics_verbose:
             words = print_compare_string_tensors(words, target_words, "precision")
         return tf.metrics.accuracy(words, target_words, name='precision')
 
     def compute_recall(self, groundtruth_boxlist, detection_boxlist):
+        """ Compute recall, i.e. the proportion of groundtruth text that are correctly transcribed. This metric is quite
+        coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
+        which measures accuracy at character level.
+
+        Details on how this is computed:
+            We rely on tf.metrics.accuracy, giving as input the groundtruth text vector and the corresponding vector of
+            best model predictions (best in terms of transcription confidence and IoU). tf.metrics.accuracy computes
+            the ratio of matching vector rows over the size of the vector. The size of the vector is the same
+            as groundtruth_size. A matching row is equivalent to a True Positive. An unmatched row is equivalent
+            to a False Negative (and a False Positive). Therefore, here we are computing matched_rows / (matched_rows +
+            + unmatched_rows) = True Positives / (True Positives + False Negatives). Since we include in this computation
+            all True Positives and all False Negatives, this quantity is indeed recall.
+
+        Args:
+            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
+                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
+            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
+                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+
+        Returns:
+            a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
+            detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
+            predictions.
+        """
         top_words = detection_boxlist.get_field(fields.BoxListFields.transcription)
         groundtruth_text = groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
         (_, _, _, _, match) = self._target_assigner.assign(groundtruth_boxlist, detection_boxlist)
@@ -816,8 +872,27 @@ class CRNN:
         return tf.metrics.accuracy(groundtruth_text, assigned_top_words, name='recall'), match
 
     def compute_CER(self, matched_predicted_text, matched_groundtruth_text):
-        # Compute CER on non-empty vectors (for empty images). Both vertors are empty or not empty.
-        # In the first case, we insert a self.NULL in both so that CER is 0.
+        """ Compute Character Error Rate (CER) metric. This metric is expected to be computed between target words and
+        predicted words whose detection box has the highest IoU with the groundtruth box. Indeed, we don't want
+        to compute CER on all detections, where some of them may have no targets or might easily be of bad quality.
+
+        In case of no possible matching between detections
+        and groundtruth, as in the case of an empty image, we expect matched_predicted_text and matched_groundtruth_text
+        to be empty vectors. If so, CER cannot be computed and we return 0.0 .
+
+        Args:
+            matched_predicted_text: A string Tensor of shape [num_matched_groundtruth]. It contains the predicted words
+                with highest probability and whose detection box has the highest overlap with the corresponding groundtruth
+                object.
+            matched_groundtruth_text: A string Tensor of shape [num_matched_groundtruth]. It contains the groundtruth text.
+
+        Returns:
+            A tuple of (var, update_op) for CER.
+
+        """
+
+        # Compute CER on non-empty vectors. Since the two vectors are matched, they are both either empty or non-empty.
+        # In the former case, we insert a null character in both vectors and compute CER so that it returns 0.0 .
         matched_predicted_text = tf.cond(tf.shape(matched_predicted_text)[0] < 1,
             lambda: tf.constant([self.NULL], dtype=tf.string),
             lambda: matched_predicted_text)
@@ -829,27 +904,35 @@ class CRNN:
         return tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
              tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
 
-    def _build_metric_graph(self, words, detection_boxes, target_words, dt_positive_indices, groundtruth_boxes, padded_groundtruth_text,
+    def _build_metric_graph(self, words, detection_boxes, target_words, groundtruth_boxes, padded_groundtruth_text,
         debug_corpora, string2int=None, int2string=None):
-        """
+        """ Build a graph that computes Precision, Recall and Character Error Rate (CER). This graph is run once per eval
+        stream.
 
-        TODO: Update comments
-            Compute Precision, Recall and Character Error Rate (CER).
+        The first two metrics are coarse-grained, in that they measure accuracy at field level. For finer granularity we also
+        compute CER, which is measured at character level. Moreover, Precision and Recall are more "accurate" metrics in the sense
+        that they don't tollerate noise and in order to count a prediction as correct, all of its character have to match the groundtruth.
 
-            All metrics are backed by tf.accuracy. We devise matchings to compute the metrics.
-            Matches in tf.accuracy always equal the amount of true positives. False positives and negatives
-            are computed as below.
+        Args:
+            words: A list of size [self._top_paths] holding string Tensors of shape [num_detections]. The content of the tensor is
+                a decoded string prediction.
+            detection_boxes: A float32 Tensor of shape [num_detections, 4]. Detection boxes coming from stage 2 and CRNN pre-processing.
+            target_words: A string Tensor of shape [num_detections]. The groundtruth text assigned to each detection box.
+            groundtruth_boxes: A float32 Tensor of shape [groundtruth_size]. The groundtruth boxes from the input annotation.
+            padded_groundtruth_text: A string Tensor of shape [padded_groundtruth_size]. The groundtruth text.
+            debug_corpora: An int64 Tensor of shape [num_detections]. It contains the corpus of each detection box.
+                This is unused for metrics computation, its only purpose is when self.flags.dump_metrics_input_to_tfrecord or
+                self.flags.dump_metrics_input_to_tfrecord_using_groundtruth is on, in which case we want also to store
+                the detection boxes corpus types in the output tfrecord.
+            string2int: An optional HashTable object encoding strings to its internal alphabet. If None default to self._table_string2int.
+            int2string: An optional HashTable object decoding codes from its internal alphabet to string. If None default to self._table_int2str.
 
-            For precision, we use the postprocessed transcriptions from the model and their assigned groundtruth
-            texts. Unassigned predictions are mapped to the single code "-1", so that they will always
-            be unmatched under tf.accuracy. In this case the count of unmatched rows in tf.accuracy
-            equals the amount of false positives.
+        Returns:
+            A float32 metric dictionary eval_metric_ops:
+                'eval/precision',
+                'eval/recall',
+                'eval/CER'
 
-            For recall, we start from the perfect matching between groundtruth and predictions. Then, we pad
-            it with unmatched string pairs such that the size equals the amount of groundtruth objects.
-            This way, the number of unmatched rows under tf.accuracy equals the number of false negatives.
-
-            For CER, we simply encode in sparse format the perfect matching.
         """
         if not string2int:
             string2int = self._table_str2int
@@ -888,9 +971,7 @@ class CRNN:
                     self.input_features['debug'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
                         matched_predicted_text.dtype)
 
-
-            CER, CER_op = self.compute_CER()
-
+            CER, CER_op = self.compute_CER(matched_predicted_text, matched_groundtruth_text)
 
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
