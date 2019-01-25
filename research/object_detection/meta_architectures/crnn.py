@@ -705,7 +705,7 @@ class CRNN:
                                       name='transposed')  # [batch, width, height, features]
             conv_reshaped = tf.reshape(transposed, [-1, self._crop_size[1], self._crop_size[0] * n_channels],
                                        name='reshaped')  # [batch, width, height x features]
-        transcription_dict = self.lstm_layers(conv_reshaped, detection_corpora, seq_len_inputs, mode)
+        transcription_dict = self.lstm_layers(conv_reshaped, detection_corpora, seq_len_inputs)
         transcription_dict['labels'] = matched_transcriptions
         detections_dict = {}
         detections_dict[fields.DetectionResultFields.detection_boxes] = detection_boxes
@@ -797,7 +797,7 @@ class CRNN:
         tens = tf.concat([tf.expand_dims(x, axis=1) for x in [source, dest]], axis=1)
         return tf.map_fn(lambda t: tf.Print(t[0],[*tf.split(t, 2, axis=0), tf.shape(tens)[0]], message=mess, summarize=summar), tens)
 
-    def _re_encode_groundtruth(self, matched_transcriptions):
+    def _re_encode_groundtruth(self, matched_transcriptions, string2int, int2string):
         """Re-encode groundtruth. TODO: rethink this step."""
         matched_codes = self.str2code(matched_transcriptions, string2int)
         # array of labels length
@@ -806,7 +806,14 @@ class CRNN:
         target_chars = int2string.lookup(tf.cast(matched_codes, tf.int64))
         return get_words_from_chars(target_chars.values, seq_lengths_labels)
 
-    def compute_precision(self, words, target_words):
+    def assign_top_words_to_groundtruth(self, groundtruth_boxlist, detection_boxlist):
+        top_words = detection_boxlist.get_field(fields.BoxListFields.transcription)
+        (_, _, _, _, match) = self._target_assigner.assign(groundtruth_boxlist, detection_boxlist)
+        assigned_top_words = match.gather_based_on_match(top_words, self.NULL, self.NULL)
+        groundtruth_boxlist.add_field(fields.BoxListFields.transcription, assigned_top_words)
+        return match
+
+    def compute_precision(self, words, target_words, string2int, int2string):
         """ Compute precision, i.e. the proportion of detection boxes whose transcription is matches the groundtruth. This metric is quite
         coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
         which measures accuracy at character level.
@@ -825,18 +832,20 @@ class CRNN:
                 groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
             detection_boxlist: A BoxList with detections. The field 'transcription' is required.
                 'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+            string2int: A HashTable encoder.
+            int2string: A HashTable decoder.
 
         Returns:
             a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
             detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
             predictions.
         """
-        target_words = self._re_encode_groundtruth(target_words)
+        target_words = self._re_encode_groundtruth(target_words, string2int, int2string)
         if self.flags.metrics_verbose:
             words = print_compare_string_tensors(words, target_words, "precision")
         return tf.metrics.accuracy(words, target_words, name='precision')
 
-    def compute_recall(self, groundtruth_boxlist, detection_boxlist):
+    def compute_recall(self, groundtruth_boxlist, string2int, int2string, detection_boxlist=None, match=None):
         """ Compute recall, i.e. the proportion of groundtruth text that are correctly transcribed. This metric is quite
         coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
         which measures accuracy at character level.
@@ -855,23 +864,28 @@ class CRNN:
                 groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
             detection_boxlist: A BoxList with detections. The field 'transcription' is required.
                 'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+            string2int: A HashTable encoder.
+            int2string: A HashTable decoder.
 
         Returns:
             a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
             detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
             predictions.
         """
-        top_words = detection_boxlist.get_field(fields.BoxListFields.transcription)
+        if not match and not detection_boxlist:
+            raise ValueError("Cannot compute recall: both detection_boxlist and match object were not provided")
+        if not match:
+            match = self.assign_top_words_to_groundtruth(groundtruth_boxlist, detection_boxlist)
+
         groundtruth_text = groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-        (_, _, _, _, match) = self._target_assigner.assign(groundtruth_boxlist, detection_boxlist)
-        assigned_top_words = match.gather_based_on_match(top_words, self.NULL, self.NULL)
-        groundtruth_boxlist.add_field(fields.BoxListFields.transcription, assigned_top_words)
-        groundtruth_text = self._re_encode_groundtruth(groundtruth_text)
+        assigned_top_words = groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
+        groundtruth_text = self._re_encode_groundtruth(groundtruth_text, string2int, int2string)
         if self.flags.metrics_verbose:
             groundtruth_text = print_compare_string_tensors(groundtruth_text, assigned_top_words, "recall")
-        return tf.metrics.accuracy(groundtruth_text, assigned_top_words, name='recall'), match
+        recall, recall_op = tf.metrics.accuracy(groundtruth_text, assigned_top_words, name='recall')
+        return recall, recall_op, match
 
-    def compute_CER(self, matched_predicted_text, matched_groundtruth_text):
+    def compute_CER(self, groundtruth_boxlist, string2int, detection_boxlist=None, match=None, dump_fn=None):
         """ Compute Character Error Rate (CER) metric. This metric is expected to be computed between target words and
         predicted words whose detection box has the highest IoU with the groundtruth box. Indeed, we don't want
         to compute CER on all detections, where some of them may have no targets or might easily be of bad quality.
@@ -885,12 +899,23 @@ class CRNN:
                 with highest probability and whose detection box has the highest overlap with the corresponding groundtruth
                 object.
             matched_groundtruth_text: A string Tensor of shape [num_matched_groundtruth]. It contains the groundtruth text.
+            string2int: A HashTable encoder.
 
         Returns:
             A tuple of (var, update_op) for CER.
 
         """
+        if not match and not detection_boxlist:
+            raise ValueError("Cannot compute CER: both detection_boxlist and match object were not provided")
+        if not match:
+            match = self.assign_top_words_to_groundtruth(groundtruth_boxlist, detection_boxlist)
 
+        indicator = match.matched_column_indicator()
+        matched_groundtruth_boxlist = box_list_ops.boolean_mask(groundtruth_boxlist, indicator)
+        matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+        matched_predicted_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
+        if dump_fn:
+            matched_predicted_text = dump_fn(matched_predicted_text, matched_groundtruth_boxlist, match)
         # Compute CER on non-empty vectors. Since the two vectors are matched, they are both either empty or non-empty.
         # In the former case, we insert a null character in both vectors and compute CER so that it returns 0.0 .
         matched_predicted_text = tf.cond(tf.shape(matched_predicted_text)[0] < 1,
@@ -901,8 +926,24 @@ class CRNN:
             lambda: matched_groundtruth_text)
         sparse_code_pred = self.str2code(matched_predicted_text, string2int)
         sparse_code_target = self.str2code(matched_groundtruth_text, string2int)
-        return tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
+        CER, CER_op = tf.metrics.mean(tf.edit_distance(tf.cast(sparse_code_pred, dtype=tf.int64),
              tf.cast(sparse_code_target, dtype=tf.int64)), name='CER')
+        return CER, CER_op, match
+
+    def dump_tfrecord(x, matched_groundtruth_boxlist, match, detection_boxlist, debug_corpora):
+        # This code was used to compare this architecture to the 2-staged one
+        assigned_detection_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
+        assigned_detection_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
+        matched_detection_boxes = tf.boolean_mask(assigned_detection_boxes, indicator)
+        matched_detection_corpora = tf.boolean_mask(assigned_detection_corpora, indicator)
+        matched_groundtruth_boxes = matched_groundtruth_boxlist.get()
+        image = self.input_features[fields.InputDataFields.image]
+        if self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
+            matched_detection_boxes = matched_groundtruth_boxes
+        crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, matched_detection_boxes, [32, 256])
+        return tf.py_func(self.write_to_file, [x, crops,
+            self.input_features['debug'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
+                x.dtype)
 
     def _build_metric_graph(self, words, detection_boxes, target_words, groundtruth_boxes, padded_groundtruth_text,
         debug_corpora, string2int=None, int2string=None):
@@ -941,37 +982,18 @@ class CRNN:
 
         with tf.name_scope('evaluation'):
             top_words = words[0]
-            precision, precision_op = self.compute_precision(top_words, target_words)
-
             groundtruth_boxlist = box_list.BoxList(groundtruth_boxes)
             groundtruth_text = padded_groundtruth_text[:groundtruth_boxlist.num_boxes()]
             groundtruth_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, groundtruth_text)
             detection_boxlist = box_list.BoxList(detection_boxes[0])
             detection_boxlist.add_field(fields.BoxListFields.transcription, top_words)
-            recall, recall_op, match =  self.compute_recall(groundtruth_boxlist, detection_boxlist)
-
-            # Compute Character Error Rate
-            indicator = match.matched_column_indicator()
-            matched_groundtruth_boxlist = box_list_ops.boolean_mask(groundtruth_boxlist, indicator)
-            matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-            matched_predicted_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
-
-            # This code was used to compare this architecture to the 2-staged one
+            dump_fn = None
             if self.flags.dump_metrics_input_to_tfrecord or self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
-                assigned_detection_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
-                assigned_detection_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
-                matched_detection_boxes = tf.boolean_mask(assigned_detection_boxes, indicator)
-                matched_detection_corpora = tf.boolean_mask(assigned_detection_corpora, indicator)
-                matched_groundtruth_boxes = matched_groundtruth_boxlist.get()
-                image = self.input_features[fields.InputDataFields.image]
-                if self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
-                    matched_detection_boxes = matched_groundtruth_boxes
-                crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, matched_detection_boxes, [32, 256])
-                matched_predicted_text = tf.py_func(self.write_to_file, [matched_predicted_text, crops,
-                    self.input_features['debug'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
-                        matched_predicted_text.dtype)
+                dump_fn = partial(self.dump_tfrecord, debug_corpora=debug_corpora, detection_boxlist=detection_boxlist)
 
-            CER, CER_op = self.compute_CER(matched_predicted_text, matched_groundtruth_text)
+            precision, precision_op = self.compute_precision(top_words, target_words, string2int, int2string)
+            recall, recall_op, match =  self.compute_recall(groundtruth_boxlist, string2int, int2string, detection_boxlist=detection_boxlist)
+            CER, CER_op, match = self.compute_CER(groundtruth_boxlist, string2int, match=match, dump_fn=dump_fn)
 
             eval_metric_ops = {
                 'eval/precision' : (precision, precision_op),
@@ -980,7 +1002,17 @@ class CRNN:
             }
             return eval_metric_ops
 
-    def lstm_layers(self, feature_maps, corpus, seq_len_inputs, mode):
+    def lstm_layers(self, feature_maps, corpus, seq_len_inputs):
+        """ Implementation of bidirectional lstm. Also performs post-processing decoding of predictions.
+
+        Args:
+            feature_maps: A float32 Tensor of shape [num_detections, self._crop_size[0], self._crop_size[1], D].
+            corpus: An int64 Tensor of shape [num_detections].
+            seq_len_inputs: An int64 Tensor of shape [num_detections]. The true width of the unpadded feature_maps.
+
+        Returns:
+            transcription_dict. Please refer to predict() for info on its structure.
+        """
         parameters = self._parameters
 
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
