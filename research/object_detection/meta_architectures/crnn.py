@@ -331,7 +331,6 @@ class CRNN:
                     'eval/precision/synth': precision for source stream,
                     'eval/recall/synth': recall for target stream,
                     'eval/CER/synth': CER for target stream,
-
         """
         # Catch root variable scope in order to access variables external to CRNN.
         self._debug_root_variable_scope = tf.get_variable_scope()
@@ -350,6 +349,7 @@ class CRNN:
                 predict_fn, name="StepCond")
 
     def _predict(self, prediction_dict, true_image_shapes, mode):
+        """"""
         detection_model = self._detection_model
         # Postprocess and unpad detections.
         detections_dict = detection_model._postprocess_box_classifier(
@@ -436,9 +436,9 @@ class CRNN:
             def train_forward_pass():
                 """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
 
-                    Returns:
-                        A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
-                        the loss should be used.
+                Returns:
+                    A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
+                    the loss should be used.
                 """
                 sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
 
@@ -454,18 +454,18 @@ class CRNN:
                 sparse_code_target = self.str2code(matched_transcriptions)
 
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
-                        detection_scores, detection_corpora, num_detections, mode)
+                        detection_scores, detection_corpora, num_detections)
 
                 return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
 
             def eval_forward_pass():
                 """Forward matched detections to the crop_feature_map() function and the lstm layers. EVAL-specific version.
 
-                    Returns:
-                        A list [self._zero_loss, transcription_dict]. transcription_dict is the only valid return value.
+                Returns:
+                    A list [self._zero_loss, transcription_dict]. transcription_dict is the only valid return value.
                 """
                 transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                    padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode)
+                    padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections)
                 return [self._zero_loss, transcriptions_dict]
 
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -507,32 +507,32 @@ class CRNN:
 
 
         predict_fn = lambda : [self._zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections, mode),
+                padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections),
                 self.no_eval_op]
         return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
             self.no_result_fn(detections_dict), name=BATCH_COND)
 
     def crop_feature_map(self, features_to_crop, bboxes):
         """ Function that extracts field features from the last feature extractor map.
-            This function is backed by tf.image.crop_and_resize.
+        This function is backed by tf.image.crop_and_resize.
 
-            The main advantage with respect to tf.image.crop_and_resize is the minimal
-            distortion on height and width.
-            Indeed, the width of the bboxes is kept as-is in the final crop. The height
-            is instead distorted to fixed value (self._crop_size[0]).
+        The main advantage with respect to tf.image.crop_and_resize is the minimal
+        distortion on height and width.
+        Indeed, the width of the bboxes is kept as-is in the final crop. The height
+        is instead distorted to fixed value (self._crop_size[0]).
 
-            The second operation this function has is to pad crops to self._crop_size[1].
-            There is an exception for boxes that are longer than self._crop_size[1]. In that case
-            The width is not kept the same but it's distorted to self._crop_size[1].
+        The second operation this function has is to pad crops to self._crop_size[1].
+        There is an exception for boxes that are longer than self._crop_size[1]. In that case
+        The width is not kept the same but it's distorted to self._crop_size[1].
 
-            Args:
-                features_to_crop: The last feature map layer. A float32 Tensor of shape
-                    [1, h, w, D].
-                bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
-                    A float32 Tensor of shape [num_detections, 4].
-            Returns:
-                A float 32 Tensor of shape
-                    [num_detections, self._crops_size[0], self._crop_size[1], D]
+        Args:
+            features_to_crop: The last feature map layer. A float32 Tensor of shape
+                [1, h, w, D].
+            bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+                A float32 Tensor of shape [num_detections, 4].
+        Returns:
+            A float 32 Tensor of shape
+                [num_detections, self._crops_size[0], self._crop_size[1], D]
         """
         output_height, output_width = self._crop_size
 
@@ -557,21 +557,21 @@ class CRNN:
 
     def crop_feature_map_keep_aspect_ratio(self, img, bboxes, crop_size):
         """ Function that extracts field features from the last feature extractor map.
-            This function is backed by tf.image.crop_and_resize.
+        This function is backed by tf.image.crop_and_resize.
 
-            The only difference with crop_feature_map() is in how the width is computed.
-            In this case we keep the aspect ratio of the bounding box after changing the
-            height to self._crop_size[0]. Note that crop_feature_map() has proved to work
-            better in terms of sequence length with feature maps that have high resolution.
+        The only difference with crop_feature_map() is in how the width is computed.
+        In this case we keep the aspect ratio of the bounding box after changing the
+        height to self._crop_size[0]. Note that crop_feature_map() has proved to work
+        better in terms of sequence length with feature maps that have high resolution.
 
-            Args:
-                features_to_crop: The last feature map layer. A float32 Tensor of shape
-                    [1, h, w, D].
-                bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
-                    A float32 Tensor of shape [num_detections, 4].
-            Returns:
-                A float 32 Tensor of shape
-                    [num_detections, self._crops_size[0], self._crop_size[1], D]
+        Args:
+            features_to_crop: The last feature map layer. A float32 Tensor of shape
+                [1, h, w, D].
+            bboxes: The detection boxes coming from stage 2, after CRNN pre-processing.
+                A float32 Tensor of shape [num_detections, 4].
+        Returns:
+            A float 32 Tensor of shape
+                [num_detections, self._crops_size[0], self._crop_size[1], D]
         """
         output_height, output_width = crop_size
 
@@ -650,7 +650,7 @@ class CRNN:
         return self._metrics[self._metric_names[0]]
 
     def _predict_lstm(self, rpn_features_to_crop, detection_boxes, matched_transcriptions,
-        detection_scores, detection_corpora, num_detections, mode):
+        detection_scores, detection_corpora, num_detections):
         """ The inner logic of CRNN. First perform crop_feature_map() to get
             field features. Then reshape the cropped field features and forward to the
             bidirectional lstm layers.
@@ -666,9 +666,8 @@ class CRNN:
                 detection_corpora: An int64 Tensor of shape [num_detections]. Stores the assigned type to each detection.
                 num_detections: A scalar int64 Tensor. The number of detection boxes coming from stage 2. Note that there usually is pre-processing before calling
                     this function, therefore (in TRAIN mode) this is the number of detections that have a transcription target.
-                mode
             Returns:
-
+                The transcription_dict. See predict() for more information.
         """
         detection_model = self._detection_model
         if not self._backprop_detection:
@@ -719,7 +718,15 @@ class CRNN:
 
 
     def str2code(self, labels, table_str2int=None):
-        """Convert string label to code label"""
+        """Convert string label to code label
+
+        Args:
+            labels: A string Tensor of shape [groundtruth_size].
+            table_str2int: HashTable encoder. If None defaults to
+                self._table_str2int
+        Returns:
+            A SparseTensor, the encoded version of labels.
+        """
         with tf.name_scope('str2code_conversion'):
             if not table_str2int:
              table_str2int = self._table_str2int
@@ -736,8 +743,10 @@ class CRNN:
 
         Args:
             predictions_dict: See predict() for details.
-            sparse_code_target:
+            sparse_code_target: A sparse Tensor containing encoded groundtruth.
 
+        Returns:
+            A scalar float32 Tensor.
         """
         # Alphabet and codes
         seq_len_inputs = predictions_dict['seq_len_inputs']
@@ -798,7 +807,7 @@ class CRNN:
         return tf.map_fn(lambda t: tf.Print(t[0],[*tf.split(t, 2, axis=0), tf.shape(tens)[0]], message=mess, summarize=summar), tens)
 
     def _re_encode_groundtruth(self, matched_transcriptions, string2int, int2string):
-        """Re-encode groundtruth. TODO: rethink this step."""
+        """Re-encode groundtruth. TODO: maybe remove this step."""
         matched_codes = self.str2code(matched_transcriptions, string2int)
         # array of labels length
         seq_lengths_labels = tf.bincount(tf.cast(matched_codes.indices[:, 0], tf.int32),
@@ -807,6 +816,16 @@ class CRNN:
         return get_words_from_chars(target_chars.values, seq_lengths_labels)
 
     def assign_top_words_to_groundtruth(self, groundtruth_boxlist, detection_boxlist):
+        """ Assign the best prediction to every groundtruth object.
+        Args:
+            groundtruth_boxlist: A BoxList of size groundtruth_size.
+            detection_boxlist: A BoxList of size num_detections. We expect that 'transcription'
+                field is filled with top predictions for each detection box.
+        Returns:
+            A Match object encoding the assignment of detections to groundtruth. Moreover,
+            groundtruth_boxlist's transcription field is filled with the best prediction per
+            groundtruth object.
+        """
         top_words = detection_boxlist.get_field(fields.BoxListFields.transcription)
         (_, _, _, _, match) = self._target_assigner.assign(groundtruth_boxlist, detection_boxlist)
         assigned_top_words = match.gather_based_on_match(top_words, self.NULL, self.NULL)
@@ -814,31 +833,27 @@ class CRNN:
         return match
 
     def compute_precision(self, words, target_words, string2int, int2string):
-        """ Compute precision, i.e. the proportion of detection boxes whose transcription is matches the groundtruth. This metric is quite
+        """ Compute precision, i.e. the proportion of detection boxes whose transcription matches the groundtruth. This metric is quite
         coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
         which measures accuracy at character level.
 
         Details on how this is computed:
-            We rely on tf.metrics.accuracy, giving as input the highest confidence text prediction per detection and the corresponding vector of
+            We rely on tf.metrics.accuracy, giving as input the highest confidence transcription per detection and the corresponding vector of
             target text (assigned according to highest IoU). tf.metrics.accuracy computes
             the ratio of matching vector rows over the size of the vector. The size of the vector is the same
             as num_detections. A matching row is equivalent to a True Positive. An unmatched row is equivalent
-            to a False Positive (and a False Negative). Therefore, here we are computing matched_rows / (matched_rows +
+            to a False Positive (or a False Negative). Therefore, here we are computing matched_rows / (matched_rows +
             + unmatched_rows) = True Positives / (True Positives + False Positives). Since we include in this computation
             all True Positives and all False Positives, this quantity is indeed precision.
 
         Args:
-            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
-                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
-            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
-                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+            words: A string Tensor of shape [num_detections] containing top predictions.
+            target_words: A string Tensor of shape [num_detections] containing assigned groundtruth objects.
             string2int: A HashTable encoder.
             int2string: A HashTable decoder.
 
         Returns:
-            a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
-            detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
-            predictions.
+            variable and update_op for precision.
         """
         target_words = self._re_encode_groundtruth(target_words, string2int, int2string)
         if self.flags.metrics_verbose:
@@ -850,26 +865,35 @@ class CRNN:
         coarse-grained, in that it measures performance at field level. For a finer granularity metric see compute_CER(),
         which measures accuracy at character level.
 
+        This function can be interfaced in two different ways: either by providing a Match object encoding the assignment
+        of detections to groundtruth, or by explicitely providing the boxlist of detections. In this last case the match
+        will be computed internally.
+
         Details on how this is computed:
             We rely on tf.metrics.accuracy, giving as input the groundtruth text vector and the corresponding vector of
             best model predictions (best in terms of transcription confidence and IoU). tf.metrics.accuracy computes
             the ratio of matching vector rows over the size of the vector. The size of the vector is the same
             as groundtruth_size. A matching row is equivalent to a True Positive. An unmatched row is equivalent
-            to a False Negative (and a False Positive). Therefore, here we are computing matched_rows / (matched_rows +
+            to a False Negative (or a False Positive). Therefore, here we are computing matched_rows / (matched_rows +
             + unmatched_rows) = True Positives / (True Positives + False Negatives). Since we include in this computation
             all True Positives and all False Negatives, this quantity is indeed recall.
 
         Args:
             groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
                 groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
-            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
-                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+                If match argument is provided, 'transcription' field is also required.
             string2int: A HashTable encoder.
             int2string: A HashTable decoder.
+            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
+                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+                If match argument is also provided, this argument is unused.
+            match: A Match object encoding assignemnt of detections to groundtruth. If not provided, then
+                detection_boxlist MUST be passed in. This will compute the matching internally.
 
         Returns:
-            a tuple (var, update) for recall and Match object encoding the assignment of groundtruth boxes to
-            detection boxes. The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
+            variable, update_op for recall and a Match object encoding the assignment of groundtruth boxes to
+            detection boxes. If match argument is provided, this is that same match object.
+            The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
             predictions.
         """
         if not match and not detection_boxlist:
@@ -887,22 +911,39 @@ class CRNN:
 
     def compute_CER(self, groundtruth_boxlist, string2int, detection_boxlist=None, match=None, dump_fn=None):
         """ Compute Character Error Rate (CER) metric. This metric is expected to be computed between target words and
-        predicted words whose detection box has the highest IoU with the groundtruth box. Indeed, we don't want
+        assigned predicted words whose detection box has the highest IoU with the groundtruth box. Indeed, we don't want
         to compute CER on all detections, where some of them may have no targets or might easily be of bad quality.
 
         In case of no possible matching between detections
-        and groundtruth, as in the case of an empty image, we expect matched_predicted_text and matched_groundtruth_text
-        to be empty vectors. If so, CER cannot be computed and we return 0.0 .
+        and groundtruth, as in the case of an empty image, CER cannot be computed and we return 0.0 .
+
+        This function can be interfaced in two different ways: either by providing a Match object encoding the assignment
+        of detections to groundtruth, or by explicitely providing the boxlist of detections. In this last case the match
+        will be computed internally.
 
         Args:
-            matched_predicted_text: A string Tensor of shape [num_matched_groundtruth]. It contains the predicted words
-                with highest probability and whose detection box has the highest overlap with the corresponding groundtruth
-                object.
-            matched_groundtruth_text: A string Tensor of shape [num_matched_groundtruth]. It contains the groundtruth text.
+            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
+                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
+                If match argument is provided, 'transcription' field is also required.
             string2int: A HashTable encoder.
-
+            detection_boxlist: A BoxList with detections. The field 'transcription' is required.
+                'transcription' is a string Tensor of shape [detection_boxlist.num_boxes()].
+                If match argument is also provided, this argument is unused.
+            match: A Match object encoding assignemnt of detections to groundtruth. If not provided, then
+                detection_boxlist MUST be passed in. This will compute the matching internally.
+            dump_fn: An optional function for dumping input to a tfrecord.
+                Args:
+                    x: A Tensor used to hook the function to the graph.
+                    matched_groundtruth_boxlist: A BoxList of size matched_groundtruth_size.
+                        'groundtruth_transcription' and 'transcription' fields are filled in.
+                    match: A Match object encoding assignment of detections to groundtruth.
+                Returns:
+                    The Tensor x.
         Returns:
-            A tuple of (var, update_op) for CER.
+            variable, update_op for CER and a Match object encoding the assignment of groundtruth boxes to
+            detection boxes. If match argument is provided, this is that same match object.
+            The field 'transcription' of groundtruth_boxlist is filled with groundtruth assigned top
+            predictions.
 
         """
         if not match and not detection_boxlist:
@@ -931,7 +972,17 @@ class CRNN:
         return CER, CER_op, match
 
     def dump_tfrecord(x, matched_groundtruth_boxlist, match, detection_boxlist, debug_corpora):
-        # This code was used to compare this architecture to the 2-staged one
+        """ This function was used to compare this architecture to the 2-staged one
+        Args:
+            x: A Tensor used to hook the function to the graph.
+            matched_groundtruth_boxlist: A BoxList of size matched_groundtruth_size.
+                'groundtruth_transcription' and 'transcription' fields are filled in.
+            match: A Match object encoding assignment of detections to groundtruth.
+            detection_boxlist: A BoxList of size num_detections.
+            debug_corpora: An int64 Tensor of shape [num_detections].
+        Returns:
+            The Tensor x.
+        """
         assigned_detection_boxes = match.gather_based_on_match(detection_boxlist.get(), [-1.0] * 4, [-1.0] * 4)
         assigned_detection_corpora = match.gather_based_on_match(debug_corpora, -2, -2)
         matched_detection_boxes = tf.boolean_mask(assigned_detection_boxes, indicator)
@@ -973,7 +1024,6 @@ class CRNN:
                 'eval/precision',
                 'eval/recall',
                 'eval/CER'
-
         """
         if not string2int:
             string2int = self._table_str2int
