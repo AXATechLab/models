@@ -348,8 +348,120 @@ class CRNN:
             return tf.cond(disabled, self.no_result_fn(self.no_postprocessing),
                 predict_fn, name="StepCond")
 
+    def _fetch_groundtruth(self, true_image_shapes):
+        """ Fetch groundtruth. We maintain both normalized and absolute groundtruth
+        according to the need.
+
+        Args:
+            true_image_shapes: An int64 Tensor of shape [1, H, W, C].
+        """
+            gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
+                stage='transcription')
+            normalized_gt_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
+            normalize_gt_fn = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+                true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
+            # Guard for examples with no objects to detect (box_list_ops throws an exception)
+            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt_fn,
+                lambda: gt_boxlists[0].get()))
+            return normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions
+
+    def _assign_detection_targets(self, normalized_boxlist, gt_boxlists, gt_weights, gt_transcriptions, true_image_shapes, mode):
+        """Template Assignment (boxes with IOU bigger than 0.05 to some template space are mapped to that space)
+        TODO: investigate if assignments on normal coordinates are allowed, since this is not the way it was
+        done on FasterRCNN.
+
+        padded_detection_corpora: A tensor of shape [num_detections]. Each padded_detection_corpora[i] is the corpus type of the detection_i.
+          If the detection has no type (probably a false positive detection), then padded_detection_corpora[i]
+          is -1."""
+        detection_model = self._detection_model
+        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
+        (_, _, _, _, match) = self._template_assigner.assign(normalized_boxlist, template_boxlist)
+        template_corpora = detection_model.current_template_corpora
+        padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
+        normalized_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
+
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            return None
+
+        detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
+            true_image_shapes[0, 0], true_image_shapes[0, 1])
+
+        (_, cls_weights, _, _, match) = self._target_assigner.assign(detection_boxlist,
+            gt_boxlists[0], groundtruth_weights=gt_weights[0])
+
+        # A tensor of shape [num_detections]. Each padded_matched_transcriptions[i] holds the transcription target
+        # string of the detection_i. In case detection_i has no transcription target, self.NULL string is assigned instead.
+        padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL)
+
+        normalized_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
+
+        positive_indicator = match.matched_column_indicator()
+        valid_indicator = cls_weights > 0
+        # TODO: rewrite this step so that it's transparent
+        sampled_indices = detection_model._second_stage_sampler.subsample(
+            valid_indicator,
+            None,
+            positive_indicator,
+            stage="transcription")
+        return sampled_indices
+
+    def _build_forward_pass(self, normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode):
+        """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
+
+        Returns:
+            A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
+            the loss should be used.
+        """
+        def forward_pass():
+            sampled_padded_boxlist = normalized_detection_boxlist
+            normalized_detection_boxes = sampled_padded_boxlist.get()
+            if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
+                matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+            elif mode == tf.estimator.ModeKeys.PREDICT:
+                matched_transcriptions = tf.constant('', dtype=tf.string)
+            detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
+            detection_corpora = sampled_padded_boxlist.get_field(fields.BoxListFields.corpus)
+            num_detections = sampled_boxlist.num_boxes()
+            transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
+                    detection_scores, detection_corpora, num_detections)
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                sparse_code_target = self.str2code(matched_transcriptions)
+                return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
+            elif mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT]:
+                return [self._zero_loss, transcriptions_dict]
+
+        return forward_pass
+
+    def _compute_eval_ops(self, normalized_detection_boxlist, normalized_gt_boxlist, gt_transcriptions, transcriptions_dict):
+        padded_matched_transcriptions = normalized_detection_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+        padded_detection_corpora = normalized_detection_boxlist.get_field(fields.BoxListFields.corpus)
+        # The update ops run for every image example. They merely store the args of compute_eval_ops()
+        # in python lists. There's one op per eval stream.
+        source_update_op = lambda *args: self._source_predictions.append(args)
+        target_update_op = lambda *args: self._target_predictions.append(args)
+        common_args = [
+            transcriptions_dict['words'],
+            transcriptions_dict['detection_boxes'],
+            padded_matched_transcriptions,
+            normalized_gt_boxlist.get(),
+            gt_transcriptions[0],
+            padded_detection_corpora]
+        update_op = tf.cond(self.input_features['is_source_metrics'],
+            lambda: tf.py_func(source_update_op, common_args, []),
+            lambda: tf.py_func(target_update_op, common_args, []))
+
+        # This var does the actual metric evaluation and stores the result in self._metrics
+        first_var = tf.py_func(self._first_value_op, [], tf.float32)
+        eval_metric_ops = {self._metric_names[0]: (first_var, update_op)}
+
+        # Compute all metrics only once.
+        with tf.control_dependencies([first_var]):
+            for metric in self._metric_names[1:]:
+                eval_metric_ops[metric] = (tf.py_func(lambda m: self._metrics[m.decode('latin1')], [metric], tf.float32),
+                    update_op)
+        return eval_metric_ops
+
     def _predict(self, prediction_dict, true_image_shapes, mode):
-        """"""
         detection_model = self._detection_model
         # Postprocess and unpad detections.
         detections_dict = detection_model._postprocess_box_classifier(
@@ -367,24 +479,18 @@ class CRNN:
             fields.DetectionResultFields.detection_scores][0][:num_detections]
         # Placeholder detection corpora.
         detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32)
-        padded_matched_transcriptions = tf.constant('', dtype=tf.string)
         # Remove detection classes since text detection is not a multiclass problem
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
 
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
 
-        # Fetch groundtruth. We maintain both normalized and absolute groundtruth
-        # according to the use.
-        if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-            gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
-                stage='transcription')
-            normalized_gt_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
-            normalize_gt_fn = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
-                true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
-            # Guard for examples with no objects to detect (box_list_ops throws an exception)
-            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt_fn,
-                lambda: gt_boxlists[0].get()))
+        normalized_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
 
+        # The name of CRNN's Condition 2. This condition ensures that the loss is computed on a non-empty batch.
+        BATCH_COND = 'BatchCond'
+
+        if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
+            normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions = self._fetch_groundtruth()
             if mode == tf.estimator.ModeKeys.TRAIN:
                 if self.flags.replace_detections_with_groundtruth:
                     normalized_boxlist = normalized_gt_boxlist
@@ -392,125 +498,29 @@ class CRNN:
                 if self.flags.train_on_detections_and_groundtruth:
                     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
                     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
+        sampled_indices = self._assign_detection_targets(normalized_boxlist,
+            gt_boxlists, gt_weights, gt_transcriptions, true_image_shapes, mode)
 
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            normalized_sampled_boxlist = box_list_ops.boolean_mask(normalized_boxlist, sampled_indices)
+            train_forward_pass = self._build_forward_pass(normalized_sampled_boxlist, rpn_features_to_crop, true_image_shapes, mode)
+            # Check that at least one detection matches groundtruth
+            loss, predictions_dict = tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0),
+                lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
+            eval_metric_ops = self.no_eval_op
+        elif mode == tf.estimator.ModeKeys.EVAL:
+            eval_forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
+            # Check that there is at least one detection (there might be none due to nms even though there is no assignment)
+            loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0),
+                lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
+            eval_metric_ops = self._compute_eval_ops(normalized_boxlist, normalized_gt_boxlist, gt_transcriptions, predictions_dict)
+        elif mode == tf.estimator.ModeKeys.PREDICT:
+            predict_forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
+            loss, predictions_dict = tf.cond(tf.constant(True, dtype=tf.bool), predict_forward_pass,
+                self.no_forward_pass(detections_dict), name=BATCH_COND)
+            eval_metric_ops = self.no_eval_op
 
-        # Template Assignment (boxes with IOU bigger than 0.05 to some template space are mapped to that space)
-        # TODO: investigate if assignments on normal coordinates are allowed, since this is not the way it was
-        # done on FasterRCNN.
-        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
-        (_, _, _, _, match) = self._template_assigner.assign(normalized_boxlist, template_boxlist)
-        template_corpora = detection_model.current_template_corpora
-        ## A tensor of shape [num_detections]. Each padded_detection_corpora[i] is the corpus type of the detection_i.
-        ## If the detection has no type (i.e. probably a false positive detection), then padded_detection_corpora[i]
-        ## is -1.
-        padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
-
-        # The name of CRNN's Condition 2. This condition ensures that the loss is computed on a non-empty batch.
-        BATCH_COND = 'BatchCond'
-
-        if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-            detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
-                true_image_shapes[0, 0], true_image_shapes[0, 1])
-
-            detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
-            detection_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
-
-            (_, cls_weights, _, _, match) = self._target_assigner.assign(detection_boxlist,
-                gt_boxlists[0], groundtruth_weights=gt_weights[0])
-
-            # A tensor of shape [num_detections]. Each padded_matched_transcriptions[i] holds the transcription target
-            # string of the detection_i. In case detection_i has no transcription target, self.NULL string is assigned instead.
-            padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL)
-
-            detection_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
-
-            positive_indicator = match.matched_column_indicator()
-            valid_indicator = cls_weights > 0
-            # TODO: rewrite this step so that it's transparent
-            sampled_indices = detection_model._second_stage_sampler.subsample(
-                valid_indicator,
-                None,
-                positive_indicator,
-                stage="transcription")
-
-            def train_forward_pass():
-                """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
-
-                Returns:
-                    A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
-                    the loss should be used.
-                """
-                sampled_boxlist = box_list_ops.boolean_mask(detection_boxlist, sampled_indices)
-
-                # Replace detections with matched detections
-                normalized_sampled_boxlist = box_list_ops.to_normalized_coordinates(sampled_boxlist,
-                    true_image_shapes[0, 0], true_image_shapes[0, 1])
-                sampled_padded_boxlist = normalized_sampled_boxlist
-                normalized_detection_boxes = sampled_padded_boxlist.get()
-                matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-                detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
-                detection_corpora = sampled_padded_boxlist.get_field(fields.BoxListFields.corpus)
-                num_detections = sampled_boxlist.num_boxes()
-                sparse_code_target = self.str2code(matched_transcriptions)
-
-                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes, matched_transcriptions,
-                        detection_scores, detection_corpora, num_detections)
-
-                return [self.loss(transcriptions_dict, sparse_code_target), transcriptions_dict]
-
-            def eval_forward_pass():
-                """Forward matched detections to the crop_feature_map() function and the lstm layers. EVAL-specific version.
-
-                Returns:
-                    A list [self._zero_loss, transcription_dict]. transcription_dict is the only valid return value.
-                """
-                transcriptions_dict = self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                    padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections)
-                return [self._zero_loss, transcriptions_dict]
-
-            if mode == tf.estimator.ModeKeys.TRAIN:
-                # Check that at least one detection matches groundtruth
-                loss, predictions_dict = tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0),
-                    lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
-                eval_metric_ops = self.no_eval_op
-            else:
-                # Check that there is at least one detection (there might be none due to nms even though there is no assignment)
-                loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0),
-                    lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
-
-                # The update ops run for every image example. They merely store the args of compute_eval_ops()
-                # in python lists. There's one op per eval stream.
-                source_update_op = lambda *args: self._source_predictions.append(args)
-                target_update_op = lambda *args: self._target_predictions.append(args)
-                common_args = [
-                    predictions_dict['words'],
-                    predictions_dict['detection_boxes'],
-                    padded_matched_transcriptions,
-                    normalized_gt_boxlist.get(),
-                    gt_transcriptions[0],
-                    padded_detection_corpora]
-                update_op = tf.cond(self.input_features['is_source_metrics'],
-                    lambda: tf.py_func(source_update_op, common_args, []),
-                    lambda: tf.py_func(target_update_op, common_args, []))
-
-                # This var does the actual metric evaluation and stores the result in self._metrics
-                first_var = tf.py_func(self._first_value_op, [], tf.float32)
-                eval_metric_ops = {self._metric_names[0]: (first_var, update_op)}
-
-                # Compute all metrics only once.
-                with tf.control_dependencies([first_var]):
-                    for metric in self._metric_names[1:]:
-                        eval_metric_ops[metric] = (tf.py_func(lambda m: self._metrics[m.decode('latin1')], [metric], tf.float32),
-                            update_op)
-
-            return [loss, predictions_dict, eval_metric_ops]
-
-
-        predict_fn = lambda : [self._zero_loss, self._predict_lstm(rpn_features_to_crop, normalized_detection_boxes,
-                padded_matched_transcriptions, detection_scores, padded_detection_corpora, num_detections),
-                self.no_eval_op]
-        return tf.cond(tf.constant(True, dtype=tf.bool), predict_fn,
-            self.no_result_fn(detections_dict), name=BATCH_COND)
+        return [loss, predictions_dict, eval_metric_ops]
 
     def crop_feature_map(self, features_to_crop, bboxes):
         """ Function that extracts field features from the last feature extractor map.
@@ -594,6 +604,27 @@ class CRNN:
               dtype=tf.float32,
               parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
+    def _run_session(self, sess, pred, ops, s2i, i2s):
+        """ Run metric update operations for all stored examples.
+
+        Args:
+            sess: A tf.Session() on the metric graph.
+            preds: A list of numpy arrays of _build_metric_graph() arguments.
+            ops: A list of update_ops to run
+        """
+        sess.run([s2i.init, i2s.init])
+        init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+        sess.run(init)
+        for args in preds:
+            sess.run(ops, feed_dict={"arg_{}:0".format(i): args[i] for i in range(len(args))})
+            if self.flags.compute_only_per_example_metrics:
+                metrics = sess.run(variables)
+                pprint(metrics)
+                eval_vars = [v for v in tf.local_variables() if 'evaluation/' in v.name]
+                sess.run(tf.variables_initializer(eval_vars))
+        preds.clear()
+
+
     def _first_value_op(self):
         """A function embedded in a tf.py_func() node, performing metric computation. It starts two sessions,
             one for each eval stream.
@@ -614,34 +645,14 @@ class CRNN:
             ops = [v[1] for v in metrics.values()]
             variables = {k: var[0] for k, var in metrics.items()}
 
-        def run_session(sess, preds):
-            """ Run metric update operations for all stored examples.
-
-            Args:
-                sess: A tf.Session() on the metric graph.
-                preds: A list of numpy arrays of compute_eval_ops() arguments.
-            """
-            sess.run([s2i.init, i2s.init])
-            init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
-            sess.run(init)
-            for args in preds:
-                sess.run(ops, feed_dict={"arg_{}:0".format(i): args[i] for i in range(len(args))})
-                if self.flags.compute_only_per_example_metrics:
-                    metrics = sess.run(variables)
-                    pprint(metrics)
-                    eval_vars = [v for v in tf.local_variables() if 'evaluation/' in v.name]
-                    sess.run(tf.variables_initializer(eval_vars))
-
-            preds.clear()
-
         with tf.Session(graph=g) as session:
             print("Evaluting Main Stream")
-            run_session(session, self._target_predictions)
+            self._run_session(session, self._target_predictions, ops, s2i, i2s)
             self._metrics = session.run(variables)
 
         with tf.Session(graph=g) as session:
             print("Evaluating Secondary Stream")
-            run_session(session, self._source_predictions)
+            self._run_session(session, self._source_predictions, ops, s2i, i2s)
             synth_result = session.run(variables)
             self._metrics.update({k + "/synth": v for k, v in synth_result.items()})
 

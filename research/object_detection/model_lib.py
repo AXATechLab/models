@@ -282,7 +282,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     preprocessed_images = features[fields.InputDataFields.image]
     # preprocessed_images = tf.Print(preprocessed_images, [features['debug'], features['domain']], message="Domain is", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
-    two_stages = transcription_model is not None
+    three_stages = transcription_model is not None
     detection_model.set_domain(features['is_source_domain'])
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
@@ -297,13 +297,13 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           preprocessed_images,
           features[fields.InputDataFields.true_image_shape],
           template_ids=features[fields.InputDataFields.template_id])
-      if two_stages:
+      if three_stages:
         print("Running E2E architecture")
         transcription_model.input_features = features
         transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
-      if two_stages:
+      if three_stages:
         final_response = transcription_dict
       else:
         final_response = detection_model.postprocess(
@@ -343,8 +343,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
-      # if two_stages:
-      #   losses_dict['ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       w_regularizer = detection_model.loss_weight_regularizer()
       losses_dict['Loss/weight_regularization'] = w_regularizer
@@ -372,7 +370,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       if not train_config.transcription_optimizer.use_detection:
         transcription_optimizer, _ = optimizer_builder.build(
             train_config.transcription_optimizer)
-      elif two_stages:
+      elif three_stages:
         transcription_optimizer = training_optimizer
 
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -413,7 +411,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           name='')  # Preventing scope prefix on all variables.
 
       if is_training:
-        if two_stages:
+        if three_stages:
           train_transcription_op = tf.contrib.layers.optimize_loss(
               loss=transcription_loss,
               global_step=None,
@@ -478,7 +476,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
         vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
             eval_dict)
 
-      # tf.summary.text('predicted_words', predictions_dict['words'][0][:10])
 
 
       # Eval metrics on a single example.
@@ -501,17 +498,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             variables_to_restore,
             keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours)
         scaffold = tf.train.Scaffold(saver=saver)
-      # if two_stages:
-      #   total_loss = tf.Print(total_loss,
-      #     [transcription_eval_op['eval/accuracy'],
-      #     transcription_eval_op['eval/CER'],
-      #     transcription_dict['words'], groundtruth['groundtruth_transcription']], summarize=100)
 
-      # Concat with transcription eval
       eval_metric_ops.update(transcription_eval_ops)
-      # print(eval_metric_ops)
-      # debug, dop = eval_metric_ops['DetectionBoxes_Precision/mAP']
-      # eval_metric_ops['DetectionBoxes_Precision/mAP'] = (tf.Print(debug, [transcription_eval_op['eval/CER']]), dop)
 
     # EVAL executes on CPU, so use regular non-TPU EstimatorSpec.
     if use_tpu and mode != tf.estimator.ModeKeys.EVAL:
