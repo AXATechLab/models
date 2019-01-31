@@ -350,75 +350,90 @@ class CRNN:
 
     def _fetch_groundtruth(self, true_image_shapes):
         """ Fetch groundtruth. We maintain both normalized and absolute groundtruth
-        according to the need.
+        according to the need. If the input has no groundtruth object, the result is
+        empty boxlists and tensors.
 
         Args:
             true_image_shapes: An int64 Tensor of shape [1, H, W, C].
+        Returns:
+`           A BoxList of length [groundtruth_size] in normalized coordinates.
+            A BoxList of length [groundtruth_size] in absolute coordinates.
+            A string Tensor of shape [groundtruth_size] containing groundtruth labels.
         """
-            gt_boxlists, gt_classes, _, gt_weights, gt_transcriptions = detection_model._format_groundtruth_data(true_image_shapes,
+            groundtruth_boxlists, _, _, _, groundtruth_text = detection_model._format_groundtruth_data(true_image_shapes,
                 stage='transcription')
-            normalized_gt_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
-            normalize_gt_fn = lambda: box_list_ops.to_normalized_coordinates(gt_boxlists[0],
+            normalized_groundtruth_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
+            normalize_groundtruth_fn = lambda: box_list_ops.to_normalized_coordinates(groundtruth_boxlists[0],
                 true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
             # Guard for examples with no objects to detect (box_list_ops throws an exception)
-            normalized_gt_boxlist.set(tf.cond(gt_boxlists[0].num_boxes() > 0, normalize_gt_fn,
-                lambda: gt_boxlists[0].get()))
-            return normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions
+            normalized_groundtruth_boxlist.set(tf.cond(groundtruth_boxlists[0].num_boxes() > 0, normalize_groundtruth_fn,
+                lambda: groundtruth_boxlists[0].get()))
+            return normalized_groundtruth_boxlist, groundtruth_boxlists[0], groundtruth_text[0]
 
-    def _assign_detection_targets(self, normalized_boxlist, gt_boxlists, gt_weights, gt_transcriptions, true_image_shapes, mode):
-        """Template Assignment (boxes with IOU bigger than 0.05 to some template space are mapped to that space)
+    def _assign_detection_targets(self, normalized_detection_boxlist, groundtruth_boxlist, groundtruth_text, true_image_shapes, mode):
+        """ Find the template and groundtruth target for each detection. A detection's target is the box that has
+        the highest IoU overlap with the detection box.
+
         TODO: investigate if assignments on normal coordinates are allowed, since this is not the way it was
         done on FasterRCNN.
 
-        padded_detection_corpora: A tensor of shape [num_detections]. Each padded_detection_corpora[i] is the corpus type of the detection_i.
-          If the detection has no type (probably a false positive detection), then padded_detection_corpora[i]
-          is -1."""
-        detection_model = self._detection_model
-        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
-        (_, _, _, _, match) = self._template_assigner.assign(normalized_boxlist, template_boxlist)
-        template_corpora = detection_model.current_template_corpora
-        padded_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
-        normalized_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
-
-        if mode == tf.estimator.ModeKeys.PREDICT:
-            return normalized_boxlist, None
-
-        detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
-            true_image_shapes[0, 0], true_image_shapes[0, 1])
-
-        (_, cls_weights, _, _, match) = self._target_assigner.assign(detection_boxlist,
-            gt_boxlists[0], groundtruth_weights=gt_weights[0])
-
-        # A tensor of shape [num_detections]. Each padded_matched_transcriptions[i] holds the transcription target
-        # string of the detection_i. In case detection_i has no transcription target, self.NULL string is assigned instead.
-        padded_matched_transcriptions = match.gather_based_on_match(gt_transcriptions[0], self.NULL, self.NULL)
-
-        normalized_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, padded_matched_transcriptions)
-
-        positive_indicator = match.matched_column_indicator()
-        valid_indicator = cls_weights > 0
-        # TODO: rewrite this step so that it's transparent
-        sampled_indices = detection_model._second_stage_sampler.subsample(
-            valid_indicator,
-            None,
-            positive_indicator,
-            stage="transcription")
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            normalized_boxlist = box_list_ops.boolean_mask(normalized_boxlist, sampled_indices)
-        return normalized_boxlist, sampled_indices
-
-    def _build_forward_pass(self, normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode):
-        """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
+        Args:
+            normalized_detection_boxlist: A BoxList of detections in normalized coordinates,
+            groundtruth_boxlist: A BoxList of groundtruth in absolute coordinates,
+            groundtruth_text: A string Tensor of grountruth labels,
+            true_image_shapes: The input image size Tensor [1, H, W, C],
+            mode: The Estimator's mode (TRAIN, EVAL, PREDICT).
 
         Returns:
-            A list [loss, transcription_dict]. transcription_dict can be inspected, but normally only
-            the loss should be used.
+            A BoxList of detections same as normalized_detection_boxlist but:
+                1) Computed corpus targets (from the template) are stored in 'corpus'.
+                2) If in TRAIN or EVAL mode, computed text targets (from the groundtruth)
+                    are stored in 'groundtruth_text'.
+                3) If in TRAIN mode, unassigned detections are filtered out of the boxlist,
+                    with their corresponding targets.
+        """
+        detection_model = self._detection_model
+        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
+        (_, _, _, _, match) = self._template_assigner.assign(normalized_detection_boxlist, template_boxlist)
+        template_corpora = detection_model.current_template_corpora
+        assigned_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
+        normalized_detection_boxlist.add_field(fields.BoxListFields.corpus, assigned_detection_corpora)
+
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            return normalized_detection_boxlist
+
+        detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_detection_boxlist,
+            true_image_shapes[0, 0], true_image_shapes[0, 1])
+        (_, _, _, _, match) = self._target_assigner.assign(detection_boxlist,
+            groundtruth_boxlist)
+        target_words = match.gather_based_on_match(groundtruth_text, self.NULL, self.NULL)
+        normalized_detection_boxlist.add_field(fields.BoxListFields.groundtruth_text, target_words)
+
+        positive_indicator = match.matched_column_indicator()
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            normalized_detection_boxlist = box_list_ops.boolean_mask(normalized_detection_boxlist, positive_indicator)
+        return normalized_detection_boxlist
+
+    def _build_forward_pass(self, normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode):
+        """ Build the forward pass function, which can be run conditionally.
+
+        Args:
+            normalized_detection_boxlist: A BoxList of detections.
+                'scores', 'corpus', 'groundtruth_text' are required fields,
+            rpn_features_to_crop: Float32 Tensor. The last feature map layer. Shape: [1, h, w, D],
+            true_image_shapes Int64 Tensor of shape [1, H, W, C],
+            mode: The Estimator's mode (TRAIN, EVAL, PREDICT).
+
+        Returns:
+            The forward pass function, which returns:
+                A list [loss, transcription_dict]. See predict() for information on this values
+                according to the mode.
         """
         def forward_pass():
             sampled_padded_boxlist = normalized_detection_boxlist
             normalized_detection_boxes = sampled_padded_boxlist.get()
             if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-                matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+                matched_transcriptions = sampled_padded_boxlist.get_field(fields.BoxListFields.groundtruth_text)
             elif mode == tf.estimator.ModeKeys.PREDICT:
                 matched_transcriptions = tf.constant('', dtype=tf.string)
             detection_scores = sampled_padded_boxlist.get_field(fields.BoxListFields.scores)
@@ -434,9 +449,9 @@ class CRNN:
 
         return forward_pass
 
-    def _compute_eval_ops(self, normalized_detection_boxlist, normalized_gt_boxlist, gt_transcriptions, transcriptions_dict):
-        padded_matched_transcriptions = normalized_detection_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
-        padded_detection_corpora = normalized_detection_boxlist.get_field(fields.BoxListFields.corpus)
+    def _compute_eval_ops(self, normalized_detection_boxlist, normalized_groundtruth_boxlist, groundtruth_text, transcriptions_dict):
+        target_words = normalized_detection_boxlist.get_field(fields.BoxListFields.groundtruth_text)
+        assigned_detection_corpora = normalized_detection_boxlist.get_field(fields.BoxListFields.corpus)
         # The update ops run for every image example. They merely store the args of compute_eval_ops()
         # in python lists. There's one op per eval stream.
         source_update_op = lambda *args: self._source_predictions.append(args)
@@ -444,10 +459,10 @@ class CRNN:
         common_args = [
             transcriptions_dict['words'],
             transcriptions_dict['detection_boxes'],
-            padded_matched_transcriptions,
-            normalized_gt_boxlist.get(),
-            gt_transcriptions[0],
-            padded_detection_corpora]
+            target_words,
+            normalized_groundtruth_boxlist.get(),
+            groundtruth_text,
+            assigned_detection_corpora]
         update_op = tf.cond(self.input_features['is_source_metrics'],
             lambda: tf.py_func(source_update_op, common_args, []),
             lambda: tf.py_func(target_update_op, common_args, []))
@@ -482,33 +497,35 @@ class CRNN:
         detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32)
         # Remove detection classes since text detection is not a multiclass problem
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
-        normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
-        normalized_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
+        normalized_detection_boxlist = box_list.BoxList(normalized_detection_boxes)
+        normalized_detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
 
-        normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions = None, None, None, None, None
+        normalized_groundtruth_boxlist, groundtruth_boxlist, groundtruth_text = None, None, None
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-            normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions = self._fetch_groundtruth()
+            normalized_groundtruth_boxlist, groundtruth_boxlist, groundtruth_text = self._fetch_groundtruth()
             if mode == tf.estimator.ModeKeys.TRAIN:
                 if self.flags.replace_detections_with_groundtruth:
-                    normalized_boxlist = normalized_gt_boxlist
-                    num_detections = normalized_gt_boxlist.num_boxes()
+                    normalized_detection_boxlist = normalized_groundtruth_boxlist
+                    num_detections = normalized_groundtruth_boxlist.num_boxes()
                 if self.flags.train_on_detections_and_groundtruth:
-                    normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
-                    num_detections = num_detections + normalized_gt_boxlist.num_boxes()
-        normalized_boxlist, sampled_indices = self._assign_detection_targets(normalized_boxlist,
-            gt_boxlists, gt_weights, gt_transcriptions, true_image_shapes, mode)
-        forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
-        fail_cond = tf.equal(normalized_boxlist.num_boxes(), 0)
+                    normalized_detection_boxlist = box_list_ops.concatenate([normalized_detection_boxlist,
+                        normalized_groundtruth_boxlist])
+                    num_detections = num_detections + normalized_groundtruth_boxlist.num_boxes()
+        normalized_detection_boxlist = self._assign_detection_targets(normalized_detection_boxlist,
+            groundtruth_boxlist, groundtruth_text, true_image_shapes, mode)
+        forward_pass = self._build_forward_pass(normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode)
+        fail_cond = tf.equal(normalized_detection_boxlist.num_boxes(), 0)
         if mode == tf.estimator.ModeKeys.PREDICT:
             fail_cond = tf.constant(False, dtype=tf.bool)
-        loss, predictions_dict = tf.cond(fail_cond,
+        loss, transcription_dict = tf.cond(fail_cond,
                 lambda : self.no_forward_pass(detections_dict), forward_pass, name='BatchCond')
         if mode == tf.estimator.ModeKeys.EVAL:
-            eval_metric_ops = self._compute_eval_ops(normalized_boxlist, normalized_gt_boxlist, gt_transcriptions, predictions_dict)
+            eval_metric_ops = self._compute_eval_ops(normalized_detection_boxlist, normalized_groundtruth_boxlist,
+                groundtruth_text, transcription_dict)
         else:
             eval_metric_ops = self.no_eval_op
 
-        return [loss, predictions_dict, eval_metric_ops]
+        return [loss, transcription_dict, eval_metric_ops]
 
     def crop_feature_map(self, features_to_crop, bboxes):
         """ Function that extracts field features from the last feature extractor map.
@@ -737,22 +754,22 @@ class CRNN:
             codes = tf.cast(codes, tf.int32)
             return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
 
-    def loss(self, predictions_dict, sparse_code_target):
+    def loss(self, transcription_dict, sparse_code_target):
         """The ctc loss.
 
         Args:
-            predictions_dict: See predict() for details.
+            transcription_dict: See predict() for details.
             sparse_code_target: A sparse Tensor containing encoded groundtruth.
 
         Returns:
             A scalar float32 Tensor.
         """
         # Alphabet and codes
-        seq_len_inputs = predictions_dict['seq_len_inputs']
+        seq_len_inputs = transcription_dict['seq_len_inputs']
 
         with tf.control_dependencies([tf.less_equal(sparse_code_target.dense_shape[1], tf.reduce_max(tf.cast(seq_len_inputs, tf.int64)))]):
             loss_ctc = tf.nn.ctc_loss(labels=sparse_code_target,
-                                      inputs=predictions_dict['prob'],
+                                      inputs=transcription_dict['prob'],
                                       sequence_length=seq_len_inputs,
                                       preprocess_collapse_repeated=False,
                                       ctc_merge_repeated=True,
@@ -762,7 +779,7 @@ class CRNN:
 
             #array of labels length
             seq_lengths_labels = tf.bincount(tf.cast(sparse_code_target.indices[:, 0], tf.int32),
-                                         minlength= tf.shape(predictions_dict['prob'])[1])
+                                         minlength= tf.shape(transcription_dict['prob'])[1])
         return loss_ctc
 
 
@@ -878,8 +895,8 @@ class CRNN:
             all True Positives and all False Negatives, this quantity is indeed recall.
 
         Args:
-            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
-                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
+            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_text' is required.
+                groundtruth_text is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
                 If match argument is provided, 'transcription' field is also required.
             string2int: A HashTable encoder.
             int2string: A HashTable decoder.
@@ -900,7 +917,7 @@ class CRNN:
         if not match:
             match = self.assign_top_words_to_groundtruth(groundtruth_boxlist, detection_boxlist)
 
-        groundtruth_text = groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+        groundtruth_text = groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_text)
         assigned_top_words = groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
         groundtruth_text = self._re_encode_groundtruth(groundtruth_text, string2int, int2string)
         if self.flags.metrics_verbose:
@@ -921,8 +938,8 @@ class CRNN:
         will be computed internally.
 
         Args:
-            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_transcription' is required.
-                groundtruth_transcription is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
+            groundtruth_boxlist: A BoxList with groundtruth. The field 'groundtruth_text' is required.
+                groundtruth_text is a string Tensor of shape [groundtruth_boxlist.num_boxes()].
                 If match argument is provided, 'transcription' field is also required.
             string2int: A HashTable encoder.
             detection_boxlist: A BoxList with detections. The field 'transcription' is required.
@@ -934,7 +951,7 @@ class CRNN:
                 Args:
                     x: A Tensor used to hook the function to the graph.
                     matched_groundtruth_boxlist: A BoxList of size matched_groundtruth_size.
-                        'groundtruth_transcription' and 'transcription' fields are filled in.
+                        'groundtruth_text' and 'transcription' fields are filled in.
                     match: A Match object encoding assignment of detections to groundtruth.
                 Returns:
                     The Tensor x.
@@ -952,7 +969,7 @@ class CRNN:
 
         indicator = match.matched_column_indicator()
         matched_groundtruth_boxlist = box_list_ops.boolean_mask(groundtruth_boxlist, indicator)
-        matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_transcription)
+        matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_text)
         matched_predicted_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
         if dump_fn:
             matched_predicted_text = dump_fn(matched_predicted_text, matched_groundtruth_boxlist, match)
@@ -975,7 +992,7 @@ class CRNN:
         Args:
             x: A Tensor used to hook the function to the graph.
             matched_groundtruth_boxlist: A BoxList of size matched_groundtruth_size.
-                'groundtruth_transcription' and 'transcription' fields are filled in.
+                'groundtruth_text' and 'transcription' fields are filled in.
             match: A Match object encoding assignment of detections to groundtruth.
             detection_boxlist: A BoxList of size num_detections.
             debug_corpora: An int64 Tensor of shape [num_detections].
@@ -1033,7 +1050,7 @@ class CRNN:
             top_words = words[0]
             groundtruth_boxlist = box_list.BoxList(groundtruth_boxes)
             groundtruth_text = padded_groundtruth_text[:groundtruth_boxlist.num_boxes()]
-            groundtruth_boxlist.add_field(fields.BoxListFields.groundtruth_transcription, groundtruth_text)
+            groundtruth_boxlist.add_field(fields.BoxListFields.groundtruth_text, groundtruth_text)
             detection_boxlist = box_list.BoxList(detection_boxes[0])
             detection_boxlist.add_field(fields.BoxListFields.transcription, top_words)
             dump_fn = None
@@ -1065,30 +1082,30 @@ class CRNN:
         parameters = self._parameters
 
         logprob, raw_pred = deep_bidirectional_lstm(feature_maps, corpus, params=parameters, summaries=False)
-        predictions_dict = {'prob': logprob,
+        transcription_dict = {'prob': logprob,
                             'raw_predictions': raw_pred,
                             'seq_len_inputs': seq_len_inputs
                             }
 
         with tf.name_scope('code2str_conversion'):
             table_int2str = self._table_int2str
-            sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(predictions_dict['prob'],
+            sparse_code_pred, log_probability = tf.nn.ctc_beam_search_decoder(transcription_dict['prob'],
                                                                               sequence_length=seq_len_inputs,
                                                                               merge_repeated=False,
                                                                               beam_width=100,
                                                                               top_paths=parameters.nb_logprob)
 
-            predictions_dict[fields.TranscriptionResultFields.score] = log_probability
+            transcription_dict[fields.TranscriptionResultFields.score] = log_probability
 
             sequence_lengths_pred = [tf.bincount(tf.cast(sparse_code_pred[i].indices[:, 0], tf.int32),
-                                                minlength=tf.shape(predictions_dict['prob'])[1]) for i in range(parameters.top_paths)]
+                                                minlength=tf.shape(transcription_dict['prob'])[1]) for i in range(parameters.top_paths)]
 
             pred_chars = [table_int2str.lookup(sparse_code_pred[i]) for i in range(parameters.top_paths)]
 
             list_preds = [get_words_from_chars(pred_chars[i].values, sequence_lengths=sequence_lengths_pred[i])
                           for i in range(parameters.top_paths)]
 
-            predictions_dict[fields.TranscriptionResultFields.words] = tf.stack(list_preds)
+            transcription_dict[fields.TranscriptionResultFields.words] = tf.stack(list_preds)
 
-        return predictions_dict
+        return transcription_dict
 
