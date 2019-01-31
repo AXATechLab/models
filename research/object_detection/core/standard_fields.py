@@ -141,7 +141,7 @@ class BoxListFields(object):
     classes: classes per bounding box.
     scores: scores per bounding box.
     transcription: predicted transcriptions
-    groundtruth_transcription: target text
+    groundtruth_text: target text
     weights: sample weights per bounding box.
     objectness: objectness score per bounding box.
     masks: masks per bounding box.
@@ -152,7 +152,7 @@ class BoxListFields(object):
   """
   boxes = 'boxes'
   classes = 'classes'
-  groundtruth_transcription = 'groundtruth_transcription'
+  groundtruth_text = 'groundtruth_text'
   transcription = 'transcription'
   corpus = 'corpus'
   scores = 'scores'
