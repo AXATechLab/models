@@ -381,7 +381,7 @@ class CRNN:
         normalized_boxlist.add_field(fields.BoxListFields.corpus, padded_detection_corpora)
 
         if mode == tf.estimator.ModeKeys.PREDICT:
-            return None
+            return normalized_boxlist, None
 
         detection_boxlist = box_list_ops.to_absolute_coordinates(normalized_boxlist,
             true_image_shapes[0, 0], true_image_shapes[0, 1])
@@ -403,7 +403,9 @@ class CRNN:
             None,
             positive_indicator,
             stage="transcription")
-        return sampled_indices
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            normalized_boxlist = box_list_ops.boolean_mask(normalized_boxlist, sampled_indices)
+        return normalized_boxlist, sampled_indices
 
     def _build_forward_pass(self, normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode):
         """Forward matched detections to the crop_feature_map() function and the lstm layers. TRAIN-specific version.
@@ -477,18 +479,13 @@ class CRNN:
         rpn_features_to_crop = prediction_dict['rpn_features_to_crop']
         detection_scores = detections_dict[
             fields.DetectionResultFields.detection_scores][0][:num_detections]
-        # Placeholder detection corpora.
         detections_dict[fields.DetectionResultFields.detection_corpora] = tf.constant([[0]], dtype=tf.int32)
         # Remove detection classes since text detection is not a multiclass problem
         detections_dict.pop(fields.DetectionResultFields.detection_classes)
-
         normalized_boxlist = box_list.BoxList(normalized_detection_boxes)
-
         normalized_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
 
-        # The name of CRNN's Condition 2. This condition ensures that the loss is computed on a non-empty batch.
-        BATCH_COND = 'BatchCond'
-
+        normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions = None, None, None, None, None
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
             normalized_gt_boxlist, gt_boxlists, gt_classes, gt_weights, gt_transcriptions = self._fetch_groundtruth()
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -498,26 +495,17 @@ class CRNN:
                 if self.flags.train_on_detections_and_groundtruth:
                     normalized_boxlist = box_list_ops.concatenate([normalized_boxlist, normalized_gt_boxlist])
                     num_detections = num_detections + normalized_gt_boxlist.num_boxes()
-        sampled_indices = self._assign_detection_targets(normalized_boxlist,
+        normalized_boxlist, sampled_indices = self._assign_detection_targets(normalized_boxlist,
             gt_boxlists, gt_weights, gt_transcriptions, true_image_shapes, mode)
-
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            normalized_sampled_boxlist = box_list_ops.boolean_mask(normalized_boxlist, sampled_indices)
-            train_forward_pass = self._build_forward_pass(normalized_sampled_boxlist, rpn_features_to_crop, true_image_shapes, mode)
-            # Check that at least one detection matches groundtruth
-            loss, predictions_dict = tf.cond(tf.equal(tf.shape(sampled_indices)[0], 0),
-                lambda : self.no_forward_pass(detections_dict), train_forward_pass, name=BATCH_COND)
-            eval_metric_ops = self.no_eval_op
-        elif mode == tf.estimator.ModeKeys.EVAL:
-            eval_forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
-            # Check that there is at least one detection (there might be none due to nms even though there is no assignment)
-            loss, predictions_dict = tf.cond(tf.equal(tf.shape(normalized_detection_boxes)[0], 0),
-                lambda : self.no_forward_pass(detections_dict), eval_forward_pass, name=BATCH_COND)
+        forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
+        fail_cond = tf.equal(normalized_boxlist.num_boxes(), 0)
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            fail_cond = tf.constant(False, dtype=tf.bool)
+        loss, predictions_dict = tf.cond(fail_cond,
+                lambda : self.no_forward_pass(detections_dict), forward_pass, name='BatchCond')
+        if mode == tf.estimator.ModeKeys.EVAL:
             eval_metric_ops = self._compute_eval_ops(normalized_boxlist, normalized_gt_boxlist, gt_transcriptions, predictions_dict)
-        elif mode == tf.estimator.ModeKeys.PREDICT:
-            predict_forward_pass = self._build_forward_pass(normalized_boxlist, rpn_features_to_crop, true_image_shapes, mode)
-            loss, predictions_dict = tf.cond(tf.constant(True, dtype=tf.bool), predict_forward_pass,
-                self.no_forward_pass(detections_dict), name=BATCH_COND)
+        else:
             eval_metric_ops = self.no_eval_op
 
         return [loss, predictions_dict, eval_metric_ops]
