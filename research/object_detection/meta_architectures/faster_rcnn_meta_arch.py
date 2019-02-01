@@ -110,10 +110,11 @@ from object_detection.core import standard_fields as fields
 from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
+from pathlib import Path
 
 import sys, os
 sys.path.append("/notebooks/text-renderer/generation/")
-import data_util
+from form import Form
 
 slim = tf.contrib.slim
 
@@ -403,14 +404,11 @@ class FasterRCNNMetaArch(model.DetectionModel):
                        'grid_anchor_generator.GridAnchorGenerator.')
 
     # Michele: Read template proposals (the white spaces)
-    first_stage_proposals_path = os.path.join(first_stage_proposals_path, '')
-    template_proposals, template_corpora, tids = [], [], []
-    def template_func(img, root, name, folder):
-      _, _, annotations = data_util.xml_to_numpy(None, root, normalize=True)
-      tids.append(int(root.xpath("./template_id")[0].text))
-      template_proposals.append(tf.constant(annotations['gt_boxes'], dtype=tf.float32))
-      template_corpora.append(tf.constant(annotations['gt_corpora'], dtype=tf.int32))
-    data_util.read_xml_batch_and_apply_fn(first_stage_proposals_path, template_func)
+    templates = Form.batch_from_xml(Path(first_stage_proposals_path))
+    template_proposals = [t.boxes for t in templates]
+    template_corpora = [t.type_codes for t in templates]
+    tids = [t.template_id for t in templates]
+
     # Sort because annotations are read in arbitrary order.
     sorted_templates = sorted(zip(tids, template_proposals, template_corpora), key=lambda x: x[0])
     sorted_template_proposals, sorted_template_corpora = [], []

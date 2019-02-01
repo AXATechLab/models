@@ -10,10 +10,11 @@ from tf_crnn.data_handler import padding_inputs_width
 from functools import partial
 from utils import shape_utils
 
-import numpy as np # debug
+import numpy as np
 sys.path.append("/notebooks/text-renderer/generation/")
-import data_util as du
 from pprint import pprint
+from pathlib import Path
+from form import TranscriptionRecordsWriter, Form
 
 class CRNNFlags:
     """ CRNN flags used to add or modify functionalities of CRNN."""
@@ -836,11 +837,15 @@ class CRNN:
         # TODO: replace hard-coded path with parameter. Example of path: /notebooks/Detection/workspace/models/E2E/cer_48/zoom_in/tf1.12/predictions/
         path = '/reports/{}.tfrecord'.format(source_id)
         print("!!! Write to file: The hard coded path is", path)
-        debug_writer = tf.python_io.TFRecordWriter(path)
+        writer = TranscriptionRecordsWriter(Path(path))
         for i in range(dt_crops.shape[0]):
             crop = dt_crops[i]
-            du.write_old_tfrecord_example(debug_writer, crop[:, :true_sizes[i]], corpora[i], transcriptions[i])
-        debug_writer.close()
+            f = Form(crop)
+            f.boxes = np.array([[0, 0, f.height, true_sizes[i]]])
+            f.type_codes = np.array([corpora[i]])
+            f.transcriptions = np.array([transcriptions[i]])
+            writer.write(f)
+        writer.close()
         return x
 
     def print_compare_string_tensors(source, dest, mess, summar=9999):

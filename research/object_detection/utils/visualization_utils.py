@@ -479,8 +479,8 @@ def draw_side_by_side_evaluation_image(eval_dict,
       tf.expand_dims(eval_dict[detection_fields.detection_scores], axis=0),
       tf.expand_dims(eval_dict[detection_fields.detection_corpora], axis=0),
       tf.expand_dims(eval_dict[input_data_fields.template_id], axis=0),
-      tf.expand_dims(eval_dict['template_boxes'], axis=0),
       category_index,
+      template_boxes=tf.expand_dims(eval_dict['template_boxes'], axis=0),
       transcriptions=transcriptions,
       transcription_scores=scores,
       instance_masks=instance_masks,
@@ -495,8 +495,8 @@ def draw_side_by_side_evaluation_image(eval_dict,
       gt_placeholder,
       gt_placeholder,
       tf.constant([[-1]], dtype=tf.int64),
-      tf.expand_dims(eval_dict['template_boxes'], axis=0),
       category_index,
+      template_boxes=tf.expand_dims(eval_dict['template_boxes'], axis=0),
       transcriptions=groundtruth_transcriptions,
       transcription_scores=tf.ones(tf.shape(groundtruth_transcriptions), dtype=tf.float32),
       instance_masks=groundtruth_instance_masks,
@@ -691,14 +691,14 @@ def visualize_boxes_and_labels_on_image_array(
         display_str = ''
         if not skip_labels:
           if transcriptions is not None:
-            class_name = transcriptions[i]
-            display_str = str(class_name.decode('latin1'))
+            class_or_transcription = transcriptions[i]
+            display_str = str(class_or_transcription.decode('latin1'))
           elif not agnostic_mode:
             if classes[i] in category_index.keys():
-              class_name = category_index[classes[i]]['name']
+              class_or_transcription = category_index[classes[i]]['name']
             else:
-              class_name = 'N/A'
-            display_str = str(class_name)
+              class_or_transcription = 'N/A'
+            display_str = str(class_or_transcription)
         if not skip_scores:
           if False: #not display_str:
             display_str = '{}%'.format(int(100*scores[i]))
@@ -707,10 +707,10 @@ def visualize_boxes_and_labels_on_image_array(
             if corpora is not None:
               corpus = int(corpora[i])
             if transcription_scores is not None:
-              display_str = '[{}] {}: Dt {}%, Tr {}%'.format(corpus, display_str, int(100*scores[i]),
+              display_str = '[Corpus {}] {}: Dt {}%, Tr {}%'.format(corpus, display_str, int(100*scores[i]),
                 int(100*transcription_scores[i]))
             else:
-              display_str = '[{}] {}: {}%'.format(corpus, display_str, int(100*scores[i]))
+              display_str = '[Corpus {}] {}: {}%'.format(corpus, display_str, int(100*scores[i]))
         box_to_display_str_map[box].append(display_str)
         if agnostic_mode:
           box_to_color_map[box] = 'DarkOrange'
