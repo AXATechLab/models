@@ -131,7 +131,7 @@ class CRNN:
         for either train or eval streams.
 
         Args:
-            parameters: A Params object, a dictionary with the following keys MUST be provided:
+            parameters: A Params object, a dictionary with the following keys must be provided:
                 1) alphabet,
                 2) alphabet_decoding
         Returns:
@@ -627,13 +627,15 @@ class CRNN:
               dtype=tf.float32,
               parallel_iterations=self._detection_model._parallel_iterations), crop_widths
 
-    def _run_session(self, sess, pred, ops, s2i, i2s):
+    def _run_session(self, sess, preds, ops, s2i, i2s):
         """ Run metric update operations for all stored examples.
 
         Args:
             sess: A tf.Session() on the metric graph.
             preds: A list of numpy arrays of _build_metric_graph() arguments.
-            ops: A list of update_ops to run
+            ops: A list of update_ops to run.
+            s2i: A HashTable encoder.
+            i2s: A HashTable decoder.
         """
         sess.run([s2i.init, i2s.init])
         init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
