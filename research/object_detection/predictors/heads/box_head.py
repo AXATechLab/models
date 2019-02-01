@@ -193,17 +193,12 @@ class ConvolutionalBoxHead(head.Head):
       # @Michele code to restrict RPN encodings to template fields
       def batch_field_prediction(field, feature_map):
         y_min, x_min, y_max, x_max = tf.split(field, 4)
-        # field_map = tf.slice(feature_map, [y_min, x_min, tf.constant([0])], [y_max - y_min + 1, x_max - x_min + 1, -1])
-        #self.debug_area += (y_max[0] - y_min[0] + 1) * (x_max[0] - x_min[0] + 1)
         field_map = feature_map[y_min[0]:(y_max[0] + 1), x_min[0]:(x_max[0] + 1), :]
         return tf.reshape(field_map, [-1, self._box_code_size])
       field_prediction = partial(batch_field_prediction, feature_map=box_encodings[0])
-      #self.debug_area = 0
       anchor_list = shape_utils.static_or_dynamic_map_fn(field_prediction, elems=fields, dtype=tf.float32, as_list=True)
 
       box_encodings = tf.reshape(tf.concat(anchor_list, axis=0), [1, -1, 1, self._box_code_size])
-   # box_encodings = tf.Print(box_encodings, [tf.shape(box_encodings)], message="Box encodings shape ")
-   # box_encodings = tf.Print(box_encodings, [self.debug_area])
     return box_encodings
 
 

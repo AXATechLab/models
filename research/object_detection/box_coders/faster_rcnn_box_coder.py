@@ -101,7 +101,6 @@ class FasterRcnnBoxCoder(box_coder.BoxCoder):
     """
     ycenter_a, xcenter_a, ha, wa = anchors.get_center_coordinates_and_sizes()
 
-    # with tf.control_dependencies([tf.print([tf.shape(rel_codes), tf.shape(anchors.get())], message="test")]):
     ty, tx, th, tw = tf.unstack(tf.transpose(rel_codes))
     if self._scale_factors:
       ty /= self._scale_factors[0]

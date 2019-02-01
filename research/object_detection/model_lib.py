@@ -280,10 +280,13 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           groundtruth_is_crowd_list=gt_is_crowd_list)
 
     preprocessed_images = features[fields.InputDataFields.image]
-    # preprocessed_images = tf.Print(preprocessed_images, [features['debug'], features['domain']], message="Domain is", summarize=99999)
     global_step = tf.train.get_or_create_global_step()
     three_stages = transcription_model is not None
-    detection_model.set_domain(features['is_source_domain'])
+    if 'is_source_domain' in features:
+      detection_model.set_domain(features['is_source_domain'])
+    else:
+      # If no information on domain is given, default to target domain.
+      detection_model.set_domain(False)
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
         prediction_dict = detection_model.predict(
@@ -298,7 +301,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           features[fields.InputDataFields.true_image_shape],
           template_ids=features[fields.InputDataFields.template_id])
       if three_stages:
-        print("Running E2E architecture")
         transcription_model.input_features = features
         transcription_loss, transcription_dict, transcription_eval_ops = transcription_model.predict(prediction_dict,
             features[fields.InputDataFields.true_image_shape], mode)
@@ -458,7 +460,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
       eval_dict['is_source_metrics'] = features['is_source_metrics']
-      eval_dict['debug'] = features['debug']
+      eval_dict['filename'] = features['filename']
 
       if class_agnostic:
         category_index = label_map_util.create_class_agnostic_category_index()

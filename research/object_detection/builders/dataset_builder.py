@@ -186,7 +186,6 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
 
 
     with tf.control_dependencies([force_to_false.assign(False)]):
-      # is_source = tf.Print(is_source, [], message="Test", name="StreamBool")
       dataset_tuple = tf.cond(is_source, lambda: source_iter.get_next(), lambda: target_iter.get_next())
       # Record the data source so that this information is forwarded throughout the pipeline
       dataset_tuple[0]['is_source_domain'] = is_source_domain

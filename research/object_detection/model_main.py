@@ -61,38 +61,6 @@ flags.DEFINE_boolean(
 )
 FLAGS = flags.FLAGS
 
-
-# def profile(train_input_fn):
-#   run_metadata = tf.RunMetadata()
-#   with tf.Session() as sess:
-#     _ = sess.run(train_input_fn,
-#                  options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
-#                  run_metadata=run_metadata)
-
-#   # Print to stdout an analysis of the memory usage and the timing information
-#   # broken down by python codes.
-#   ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
-#   # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
-#   #     ).with_node_names(show_name_regexes=['.*my_code.py.*']).build()
-#   opts = (ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
-#       ).with_step(0).with_timeline_output("/notebooks/Detection/timings.json")).build()
-
-#   tf.profiler.profile(
-#       tf.get_default_graph(),
-#       run_meta=run_metadata,
-#       cmd='code',
-#       options=opts)
-
-#   # Print to stdout an analysis of the memory usage and the timing information
-#   # broken down by operation types.
-#   tf.profiler.profile(
-#       tf.get_default_graph(),
-#       run_meta=run_metadata,
-#       cmd='op',
-#       options=opts)
-
-#   return True
-
 def main(unused_argv):
 
   flags.mark_flag_as_required('model_dir')
@@ -116,8 +84,6 @@ def main(unused_argv):
   eval_on_train_input_fn = train_and_eval_dict['eval_on_train_input_fn']
   predict_input_fn = train_and_eval_dict['predict_input_fn']
   train_steps = train_and_eval_dict['train_steps']
-
-  # return profile()
 
   if FLAGS.checkpoint_dir:
     if FLAGS.eval_training_data:
@@ -144,8 +110,7 @@ def main(unused_argv):
         train_steps,
         eval_on_train_data=False)
 
-    # with tf.contrib.tfprof.ProfileContext("/notebooks/train_dir") as pctx:
-      # Currently only a single Eval Spec is allowed.
+    # Currently only a single Eval Spec is allowed.
     tf.estimator.train_and_evaluate(estimator, train_spec, eval_specs[0])
 
 

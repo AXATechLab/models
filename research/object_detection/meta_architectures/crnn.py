@@ -87,8 +87,6 @@ class CRNN:
     its feature map, meaning that the preferred way to increase batch size is to increase the image's anumber of field objects
     to transcribe.
 
-    TODO: move this dual evaluation in another class.
-
     Details on two-streams evaluation implementation:
 
     In order to evaluate the SYNTH and REAL datasets, we need to separate the two from the
@@ -359,15 +357,15 @@ class CRNN:
             A BoxList of length [groundtruth_size] in absolute coordinates.
             A string Tensor of shape [groundtruth_size] containing groundtruth labels.
         """
-            groundtruth_boxlists, _, _, _, groundtruth_text = detection_model._format_groundtruth_data(true_image_shapes,
-                stage='transcription')
-            normalized_groundtruth_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
-            normalize_groundtruth_fn = lambda: box_list_ops.to_normalized_coordinates(groundtruth_boxlists[0],
-                true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
-            # Guard for examples with no objects to detect (box_list_ops throws an exception)
-            normalized_groundtruth_boxlist.set(tf.cond(groundtruth_boxlists[0].num_boxes() > 0, normalize_groundtruth_fn,
-                lambda: groundtruth_boxlists[0].get()))
-            return normalized_groundtruth_boxlist, groundtruth_boxlists[0], groundtruth_text[0]
+        groundtruth_boxlists, _, _, _, groundtruth_text = self._detection_model._format_groundtruth_data(true_image_shapes,
+            stage='transcription')
+        normalized_groundtruth_boxlist = box_list.BoxList(tf.placeholder(shape=(1, 4), dtype=tf.float32))
+        normalize_groundtruth_fn = lambda: box_list_ops.to_normalized_coordinates(groundtruth_boxlists[0],
+            true_image_shapes[0, 0], true_image_shapes[0, 1]).get()
+        # Guard for examples with no objects to detect (box_list_ops throws an exception)
+        normalized_groundtruth_boxlist.set(tf.cond(groundtruth_boxlists[0].num_boxes() > 0, normalize_groundtruth_fn,
+            lambda: groundtruth_boxlists[0].get()))
+        return normalized_groundtruth_boxlist, groundtruth_boxlists[0], groundtruth_text[0]
 
     def _assign_detection_targets(self, normalized_detection_boxlist, groundtruth_boxlist, groundtruth_text, true_image_shapes, mode):
         """ Find the template and groundtruth target for each detection. A detection's target is the box that has
@@ -391,10 +389,9 @@ class CRNN:
                 3) If in TRAIN mode, unassigned detections are filtered out of the boxlist,
                     with their corresponding targets.
         """
-        detection_model = self._detection_model
-        template_boxlist = box_list.BoxList(detection_model.current_template_boxes)
+        template_boxlist = box_list.BoxList(self._detection_model.current_template_boxes)
         (_, _, _, _, match) = self._template_assigner.assign(normalized_detection_boxlist, template_boxlist)
-        template_corpora = detection_model.current_template_corpora
+        template_corpora = self._detection_model.current_template_corpora
         assigned_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
         normalized_detection_boxlist.add_field(fields.BoxListFields.corpus, assigned_detection_corpora)
 
@@ -436,7 +433,7 @@ class CRNN:
                 target_words = tf.constant('', dtype=tf.string)
             detection_scores = normalized_detection_boxlist.get_field(fields.BoxListFields.scores)
             detection_corpora = normalized_detection_boxlist.get_field(fields.BoxListFields.corpus)
-            num_detections = sampled_boxlist.num_boxes()
+            num_detections = normalized_detection_boxlist.num_boxes()
             transcriptions_dict = self._compute_predictions(rpn_features_to_crop, normalized_detection_boxes, target_words,
                     detection_scores, detection_corpora, num_detections)
             if mode == tf.estimator.ModeKeys.TRAIN:
@@ -500,9 +497,8 @@ class CRNN:
         Returns:
             Same values as predict().
         """
-        detection_model = self._detection_model
         # Postprocess and unpad detections.
-        detections_dict = detection_model._postprocess_box_classifier(
+        detections_dict = self._detection_model._postprocess_box_classifier(
             prediction_dict['refined_box_encodings'],
             prediction_dict['class_predictions_with_background'],
             prediction_dict['proposal_boxes'],
@@ -523,7 +519,7 @@ class CRNN:
 
         normalized_groundtruth_boxlist, groundtruth_boxlist, groundtruth_text = None, None, None
         if mode in [tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.TRAIN]:
-            normalized_groundtruth_boxlist, groundtruth_boxlist, groundtruth_text = self._fetch_groundtruth()
+            normalized_groundtruth_boxlist, groundtruth_boxlist, groundtruth_text = self._fetch_groundtruth(true_image_shapes)
             if mode == tf.estimator.ModeKeys.TRAIN:
                 if self.flags.replace_detections_with_groundtruth:
                     normalized_detection_boxlist = normalized_groundtruth_boxlist
@@ -708,7 +704,7 @@ class CRNN:
         flattened_detected_feature_maps, sequence_lengths = self.crop_feature_map_keep_aspect_ratio(orig_image, detection_boxes,
             [x * downscale for x in self._crop_size])
         if self.flags.dump_cropped_fields_to_image_file:
-            sequence_lengths = tf.py_func(self.write_to_file, [sequence_lengths, flattened_detected_feature_maps, self.input_features['debug'],
+            sequence_lengths = tf.py_func(self.write_to_file, [sequence_lengths, flattened_detected_feature_maps, self.input_features['filename'],
                 tf.tile(tf.constant([-1], dtype=tf.int64), [tf.shape(flattened_detected_feature_maps)[0]]),
                 tf.tile(tf.constant(['$']), [tf.shape(flattened_detected_feature_maps)[0]]),
                 sequence_lengths],
@@ -741,7 +737,6 @@ class CRNN:
             Returns:
                 The transcription_dict. See predict() for more information.
         """
-        detection_model = self._detection_model
         if not self._backprop_detection:
             detection_boxes = tf.stop_gradient(detection_boxes)
         if not self._backprop_feature_map:
@@ -787,9 +782,7 @@ class CRNN:
             if not table_str2int:
              table_str2int = self._table_str2int
             splitted = tf.string_split(labels, delimiter='')
-            # values_int = tf.cast(tf.squeeze(tf.decode_raw(splitted.values, tf.uint8)), tf.int64) # Why the squeeze? it causes a bug
             values_int = tf.reshape(tf.cast(tf.decode_raw(splitted.values, tf.uint8), tf.int64), [-1])
-            # values_int = tf.Print(values_int, [tf.shape(splitted.values)], message="splitted.values", summarize=9999)
             codes = table_str2int.lookup(values_int)
             codes = tf.cast(codes, tf.int32)
             return tf.SparseTensor(splitted.indices, codes, splitted.dense_shape)
@@ -1049,7 +1042,7 @@ class CRNN:
             matched_detection_boxes = matched_groundtruth_boxes
         crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, matched_detection_boxes, [32, 256])
         return tf.py_func(self.write_to_file, [x, crops,
-            self.input_features['debug'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
+            self.input_features['filename'], matched_detection_corpora, matched_groundtruth_text, true_sizes],
                 x.dtype)
 
     def _build_metric_graph(self, words, detection_boxes, target_words, groundtruth_boxes, padded_groundtruth_text,
