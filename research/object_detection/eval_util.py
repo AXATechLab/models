@@ -487,9 +487,9 @@ def repeated_checkpoint_run(tensor_dict,
 
 def result_dict_for_single_example(image,
                                    key,
-                                   tid,
-                                   template_boxes,
                                    detections,
+                                   template_boxes=None,
+                                   tid=None,
                                    groundtruth=None,
                                    class_agnostic=False,
                                    scale_to_absolute=False):
@@ -551,8 +551,9 @@ def result_dict_for_single_example(image,
   output_dict = {
       input_data_fields.original_image: image,
       input_data_fields.key: key,
-      input_data_fields.template_id: tid,
   }
+  if tid is not None:
+    output_dict[input_data_fields.template_id] = tid
 
   detection_fields = fields.DetectionResultFields
   transcription_fields = fields.TranscriptionResultFields
@@ -581,14 +582,16 @@ def result_dict_for_single_example(image,
   if scale_to_absolute:
     absolute_detection_boxlist = box_list_ops.to_absolute_coordinates(
         box_list.BoxList(detection_boxes), image_shape[1], image_shape[2])
-    absolute_template_boxlist = box_list_ops.to_absolute_coordinates(
-        box_list.BoxList(template_boxes), image_shape[1], image_shape[2])
     output_dict[detection_fields.detection_boxes] = (
         absolute_detection_boxlist.get())
-    output_dict['template_boxes'] = (absolute_template_boxlist.get())
+    if template_boxes is not None:
+      absolute_template_boxlist = box_list_ops.to_absolute_coordinates(
+          box_list.BoxList(template_boxes), image_shape[1], image_shape[2])
+      output_dict['template_boxes'] = (absolute_template_boxlist.get())
   else:
     output_dict[detection_fields.detection_boxes] = detection_boxes
-    output_dict['template_boxes'] = template_boxes
+    if template_boxes:
+      output_dict['template_boxes'] = template_boxes
   output_dict[detection_fields.detection_classes] = detection_classes
   output_dict[detection_fields.detection_scores] = detection_scores
   output_dict[detection_fields.detection_corpora] = detection_corpora

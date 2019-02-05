@@ -282,6 +282,10 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     preprocessed_images = features[fields.InputDataFields.image]
     global_step = tf.train.get_or_create_global_step()
     three_stages = transcription_model is not None
+
+    with tf.control_dependencies([tf.print(features[fields.InputDataFields.template_id])]):
+      features[fields.InputDataFields.true_image_shape] = tf.identity(features[fields.InputDataFields.true_image_shape])
+
     if 'is_source_domain' in features:
       detection_model.set_domain(features['is_source_domain'])
     else:
@@ -450,13 +454,16 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
                               tf.uint8)
       else:
         eval_images = features[fields.InputDataFields.image]
+      template_boxes = None
+      if eval_config.visualize_template_boxes:
+        template_boxes = detection_model.current_template_boxes
       eval_dict = eval_util.result_dict_for_single_example(
           eval_images[0:1],
           features[inputs.HASH_KEY][0],
-          features[fields.InputDataFields.template_id][0],
-          detection_model.current_template_boxes,
           final_response,
-          groundtruth,
+          groundtruth=groundtruth,
+          template_boxes=template_boxes,
+          tid=features[fields.InputDataFields.template_id][0],
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
       eval_dict['is_source_metrics'] = features['is_source_metrics']
@@ -477,8 +484,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
             use_normalized_coordinates=False)
         vis_metric_ops = eval_metric_op_vis.get_estimator_eval_metric_ops(
             eval_dict)
-
-
 
       # Eval metrics on a single example.
       eval_metric_ops = eval_util.get_eval_metric_ops_for_evaluators(

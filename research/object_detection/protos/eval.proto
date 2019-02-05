@@ -63,6 +63,10 @@ message EvalConfig {
   // visualizations.
   optional bool visualize_groundtruth_boxes = 17 [default=false];
 
+  // Whether to show template boxes in addition to detected boxes in
+  // visualizations.
+  optional bool visualize_template_boxes = 26 [default=false];
+
   // Box color for visualizing groundtruth boxes.
   optional string groundtruth_box_visualization_color = 18 [default="black"];
 

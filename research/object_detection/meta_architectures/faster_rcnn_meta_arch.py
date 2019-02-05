@@ -405,7 +405,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
 
     # Michele: Read template proposals (the white spaces)
     templates = Form.batch_from_xml(Path(first_stage_proposals_path))
-    template_proposals = [t.boxes for t in templates]
+    template_proposals = [t.normalized_boxes for t in templates]
     template_corpora = [t.type_codes for t in templates]
     tids = [t.template_id for t in templates]
 
@@ -422,7 +422,6 @@ class FasterRCNNMetaArch(model.DetectionModel):
       sorted_template_proposals)))
     self.template_corpora = tf.stack(list(map(lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]]]),
      sorted_template_corpora)))
-
 
     self._is_training = is_training
     self._image_resizer_fn = image_resizer_fn
@@ -678,9 +677,15 @@ class FasterRCNNMetaArch(model.DetectionModel):
     (rpn_box_encodings, rpn_objectness_predictions_with_background
     ) = self._predict_rpn_proposals(rpn_box_predictor_features)
 
-    # Pick the template that has the same id as the example
+    # Pick the template that has the same id as the example (-1 if not provided).
     # Assumption: batch size is always 1
     tid = tf.cast(template_ids, dtype=tf.int32)[0]
+    # We cannot run multiple templates if the field template/id in the input data was not provided or is incorrect.
+    # If there's only one template, the tid has no purpose so we allow execution by defaulting to 0.
+    num_templates = tf.shape(self.template_proposals)[0]
+    with tf.control_dependencies([tf.Assert(tf.logical_or(tf.greater_equal(tid, 0),
+          tf.equal(num_templates, 1)), [tid, num_templates])]):
+      tid = tf.cond(tf.less(tid, 0), lambda: 0, lambda: tid)
     num_temp_props = self.num_template_proposals[tid]
     padded_template_boxes = self.template_proposals[tid]
     self.current_template_corpora = self.template_corpora[tid, :num_temp_props]
@@ -1068,7 +1073,6 @@ class FasterRCNNMetaArch(model.DetectionModel):
           [rpn_box_predictor_features],
           num_anchors_per_location,
           scope=self.first_stage_box_predictor_scope)
-    print(box_predictions)
 
     box_encodings = tf.concat(
         box_predictions[box_predictor.BOX_ENCODINGS], axis=1)

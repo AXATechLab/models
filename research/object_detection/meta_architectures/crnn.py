@@ -320,7 +320,7 @@ class CRNN:
                     'detection_boxes' : A float32 Tensor of shape [num_detections, 4].
                         These are post-processed detection boxes in normalized coordinates from stage 2,
                     'detection_scores' : A float32 Tensor of shape [num_detections]. The scores of detection boxes,
-                    'detection_corpora' : An int64 Tensor of shape [num_detections]. The corpus type assigned to detection boxes,
+                    'detection_corpora' : An int32 Tensor of shape [num_detections]. The corpus type assigned to detection boxes,
                     'num_detections' : A scalar int64 Tensor, the number of detections.
                 3) eval_metric_ops: A float32 metric dictionary:
                     'eval/precision': precision for source stream,
@@ -393,7 +393,8 @@ class CRNN:
         template_boxlist = box_list.BoxList(self._detection_model.current_template_boxes)
         (_, _, _, _, match) = self._template_assigner.assign(normalized_detection_boxlist, template_boxlist)
         template_corpora = self._detection_model.current_template_corpora
-        assigned_detection_corpora = match.gather_based_on_match(template_corpora, -1, -1)
+        zero_encoding = tf.constant(-1, dtype=tf.int32)
+        assigned_detection_corpora = match.gather_based_on_match(template_corpora, zero_encoding, zero_encoding)
         normalized_detection_boxlist.add_field(fields.BoxListFields.corpus, assigned_detection_corpora)
 
         if mode == tf.estimator.ModeKeys.PREDICT:
@@ -661,7 +662,7 @@ class CRNN:
         g = tf.Graph()
         with g.as_default():
             # Build the metric computation graph.
-            types = [tf.string, tf.float32, tf.string, tf.float32, tf.string, tf.int64]
+            types = [tf.string, tf.float32, tf.string, tf.float32, tf.string, tf.int32]
             shapes = [None, (1, None, 4), None, (None, 4), None, None]
             names = ["arg_{}".format(i) for i in range(len(types))]
             placeholders = [tf.placeholder(tp, name=n, shape=sh) for tp, n, sh in zip(types, names, shapes)]
@@ -672,7 +673,7 @@ class CRNN:
             variables = {k: var[0] for k, var in metrics.items()}
 
         with tf.Session(graph=g) as session:
-            print("Evaluting Main Stream")
+            print("Evaluating Main Stream")
             self._run_session(session, self._target_predictions, ops, s2i, i2s)
             self._metrics = session.run(variables)
 
@@ -734,7 +735,7 @@ class CRNN:
                 target_words: A string Tensor of shape [num_detections], containing the target strings for each detection.
                 detection_scores: A float32 Tensor of shape [num_detections], containing the confidence score of each detection.
                     Not passed to the LSTM network. Just used to build transcription_dict.
-                detection_corpora: An int64 Tensor of shape [num_detections]. Stores the assigned type to each detection.
+                detection_corpora: An int32 Tensor of shape [num_detections]. Stores the assigned type to each detection.
                 num_detections: A scalar int64 Tensor. The number of detection boxes coming from stage 2. Note that there usually is pre-processing before calling
                     this function, therefore (in TRAIN mode) this is the number of detections that have a transcription target.
             Returns:
@@ -827,7 +828,7 @@ class CRNN:
                 no changes.
             dt_crops: A float32 image Tensor of shape [B, H, W, C].
             source_id: The source id of the original input image. A scalar string Tensor.
-            corpora: An int64 Tensor of shape [B]. The corpus types of the images.
+            corpora: An int32 Tensor of shape [B]. The corpus types of the images.
             transcriptions: A string Tensor of shape [B]. The groundtruth content of the image Tensors.
             true_sizes: An int64 Tensor of shape [B]. The unpadded widths of the images.
 
@@ -1035,7 +1036,7 @@ class CRNN:
                 'groundtruth_text' and 'transcription' fields are filled in.
             match: A Match object encoding assignment of detections to groundtruth.
             detection_boxlist: A BoxList of size num_detections.
-            debug_corpora: An int64 Tensor of shape [num_detections].
+            debug_corpora: An int32 Tensor of shape [num_detections].
         Returns:
             The Tensor x.
         """
@@ -1068,7 +1069,7 @@ class CRNN:
             target_words: A string Tensor of shape [num_detections]. The groundtruth text assigned to each detection box.
             groundtruth_boxes: A float32 Tensor of shape [groundtruth_size]. The groundtruth boxes from the input annotation.
             padded_groundtruth_text: A string Tensor of shape [padded_groundtruth_size]. The groundtruth text.
-            debug_corpora: An int64 Tensor of shape [num_detections]. It contains the corpus of each detection box.
+            debug_corpora: An int32 Tensor of shape [num_detections]. It contains the corpus of each detection box.
                 This is unused for metrics computation, its only purpose is when self.flags.dump_metrics_input_to_tfrecord or
                 self.flags.dump_metrics_input_to_tfrecord_using_groundtruth is on, in which case we want also to store
                 the detection boxes corpus types in the output tfrecord.
@@ -1113,7 +1114,7 @@ class CRNN:
 
         Args:
             field_features: A float32 Tensor of shape [num_detections, self._crop_size[1], self._crop_size[0] x D].
-            detection_corpora: An int64 Tensor of shape [num_detections].
+            detection_corpora: An int32 Tensor of shape [num_detections].
             sequence_lengths: An int64 Tensor of shape [num_detections]. The true width of the unpadded field_features.
 
         Returns:
