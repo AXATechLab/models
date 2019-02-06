@@ -109,7 +109,7 @@ message InputReader {
     ExternalInputReader external_input_reader = 9;
   }
   optional TFRecordInputReader tf_record_target_input_reader = 24;
-  optional TFRecordInputReader tf_record_synth_eval_input_reader = 25;
+  optional TFRecordInputReader tf_record_dual_eval_input_reader = 25;
 
 }
 

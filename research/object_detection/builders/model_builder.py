@@ -351,14 +351,15 @@ def _build_crnn_model(crnn_config, detection_model, add_summaries=True):
     "nb_logprob": crnn_config.nb_logprob,
     "top_paths": crnn_config.top_paths,
   }
-  flags = CRNNFlags(crnn_config.flags.replace_detections_with_groundtruth,
-        crnn_config.flags.train_on_detections_and_groundtruth,
-        crnn_config.flags.compute_only_per_example_metrics,
-        crnn_config.flags.explicitely_recompute_field_features,
-        crnn_config.flags.dump_cropped_fields_to_image_file,
-        crnn_config.flags.metrics_verbose,
-        crnn_config.flags.dump_metrics_input_to_tfrecord,
-        crnn_config.flags.dump_metrics_input_to_tfrecord_using_groundtruth)
+  flags = CRNNFlags(crnn_config.options.replace_detections_with_groundtruth,
+        crnn_config.options.train_on_detections_and_groundtruth,
+        crnn_config.options.compute_only_per_example_metrics,
+        crnn_config.options.explicitely_recompute_field_features,
+        crnn_config.options.dump_cropped_fields_to_image_file,
+        crnn_config.options.metrics_verbose,
+        crnn_config.options.dump_metrics_input_to_tfrecord,
+        crnn_config.options.dump_metrics_input_to_tfrecord_using_groundtruth,
+        crnn_config.options.dump_directory)
   parameters = Params(**dict_params)
 
   crnn_target_assigner = target_assigner.create_target_assigner(

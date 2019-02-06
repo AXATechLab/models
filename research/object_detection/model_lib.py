@@ -283,9 +283,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     global_step = tf.train.get_or_create_global_step()
     three_stages = transcription_model is not None
 
-    with tf.control_dependencies([tf.print(features[fields.InputDataFields.template_id])]):
-      features[fields.InputDataFields.true_image_shape] = tf.identity(features[fields.InputDataFields.true_image_shape])
-
     if 'is_source_domain' in features:
       detection_model.set_domain(features['is_source_domain'])
     else:
@@ -466,7 +463,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           tid=features[fields.InputDataFields.template_id][0],
           class_agnostic=class_agnostic,
           scale_to_absolute=True)
-      eval_dict['is_source_metrics'] = features['is_source_metrics']
+      eval_dict['metrics_on_dual'] = features['metrics_on_dual']
       eval_dict['filename'] = features['filename']
 
       if class_agnostic:

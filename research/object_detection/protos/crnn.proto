@@ -14,7 +14,7 @@ message CRNN {
   optional float keep_prob_dropout = 10 [default = 0.8];
   optional int32 nb_logprob = 11 [default = 20];
   optional int32 top_paths = 12 [default = 3];
-  optional CRNNFlags flags = 13;
+  optional CRNNFlags options = 13;
 
   message CRNNFlags {
     optional bool replace_detections_with_groundtruth = 1 [default = false];
@@ -25,5 +25,6 @@ message CRNN {
     optional bool metrics_verbose = 6 [default = false];
     optional bool dump_metrics_input_to_tfrecord = 7 [default = false];
     optional bool dump_metrics_input_to_tfrecord_using_groundtruth = 8 [default = false];
+    optional string dump_directory = 9 [default = "dumps/"];
   }
 }

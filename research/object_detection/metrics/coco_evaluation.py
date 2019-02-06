@@ -320,7 +320,6 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
             tf.shape(detection_boxes)[1:2],
             multiples=tf.shape(detection_boxes)[0:1])
 
-
     common_args = [image_id,
                    groundtruth_boxes,
                    groundtruth_classes,
@@ -334,7 +333,7 @@ class CocoDetectionEvaluator(object_detection_evaluation.DetectionEvaluator):
     source_evaluator = CocoDetectionEvaluator(self._categories, self._include_metrics_per_category, self._all_metrics_per_category)
     source_update_op = partial(update_op_py, evaluator=source_evaluator)
     target_update_op = partial(update_op_py, evaluator=self)
-    update_op = tf.cond(eval_dict['is_source_metrics'],
+    update_op = tf.cond(eval_dict['metrics_on_dual'],
                     lambda: tf.py_func(source_update_op, common_args, []),
                     lambda: tf.py_func(target_update_op, common_args, []))
     metric_names = ['DetectionBoxes_Precision/mAP',

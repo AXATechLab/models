@@ -136,10 +136,10 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
       datasets.append(read_dataset(
           functools.partial(tf.data.TFRecordDataset, buffer_size=8 * 1000 * 1000),
           input_reader_config.tf_record_target_input_reader.input_path[:], input_reader_config))
-    if is_eval and input_reader_config.HasField('tf_record_synth_eval_input_reader'):
+    if is_eval and input_reader_config.HasField('tf_record_dual_eval_input_reader'):
       datasets.append(read_dataset(
           functools.partial(tf.data.TFRecordDataset, buffer_size=8 * 1000 * 1000),
-          input_reader_config.tf_record_synth_eval_input_reader.input_path[:], input_reader_config))
+          input_reader_config.tf_record_dual_eval_input_reader.input_path[:], input_reader_config))
     for i, dataset in enumerate(datasets):
       if input_reader_config.sample_1_of_n_examples > 1:
         dataset = dataset.shard(input_reader_config.sample_1_of_n_examples, 0)
@@ -158,38 +158,38 @@ def build(input_reader_config, batch_size=None, transform_input_data_fn=None, is
       datasets[i] = dataset.prefetch(input_reader_config.num_prefetch_batches)
 
     is_source_domain = tf.Variable(False, name="is_source_domain")
-    is_source_metrics = tf.Variable(False, name="is_source_metrics")
+    metrics_on_dual = tf.Variable(False, name="metrics_on_dual")
     iters = [dataset.make_initializable_iterator() for dataset in datasets]
     for iterator in iters:
       tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
 
     if is_eval and len(datasets) == 1:
       # Eval, case one data stream: always REAL domain and metrics on REAL
-      is_source = is_source_metrics.assign(False)
+      is_source = metrics_on_dual.assign(False)
       target_iter = source_iter = iters[0]
       force_to_false = is_source_domain
     elif is_eval:
       # Eval, case two data streams: always REAL domain and alternate between metrics on SYNTH and REAL
-      is_source = is_source_metrics.assign(tf.logical_not(is_source_metrics))
+      is_source = metrics_on_dual.assign(tf.logical_not(metrics_on_dual))
       target_iter, source_iter = iters
       force_to_false = is_source_domain
     elif len(datasets) == 1:
       # Train, case one data stream: always SYNTH domain and metrics on REAL (placeholder)
       is_source = is_source_domain.assign(True)
       source_iter = target_iter = iters[0]
-      force_to_false = is_source_metrics
+      force_to_false = metrics_on_dual
     else:
       # Train, case two data stream: domain adaptation of SYNTH and REAL, metrics always on REAL (placeholder)
       is_source = is_source_domain.assign(tf.logical_not(is_source_domain))
       source_iter, target_iter = iters
-      force_to_false = is_source_metrics
+      force_to_false = metrics_on_dual
 
 
     with tf.control_dependencies([force_to_false.assign(False)]):
       dataset_tuple = tf.cond(is_source, lambda: source_iter.get_next(), lambda: target_iter.get_next())
       # Record the data source so that this information is forwarded throughout the pipeline
       dataset_tuple[0]['is_source_domain'] = is_source_domain
-      dataset_tuple[0]['is_source_metrics'] = is_source_metrics
+      dataset_tuple[0]['metrics_on_dual'] = metrics_on_dual
     return dataset_tuple
 
   raise ValueError('Unsupported input_reader_config.')
