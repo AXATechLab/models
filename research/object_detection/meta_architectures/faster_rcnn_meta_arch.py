@@ -688,8 +688,9 @@ class FasterRCNNMetaArch(model.DetectionModel):
       tid = tf.cond(tf.less(tid, 0), lambda: 0, lambda: tid)
     num_temp_props = self.num_template_proposals[tid]
     padded_template_boxes = self.template_proposals[tid]
-    self.current_template_corpora = self.template_corpora[tid, :num_temp_props]
-    self.current_template_boxes = padded_template_boxes[:num_temp_props]
+    self.current_template_corpora = tf.identity(self.template_corpora[tid, :num_temp_props], name="current_template_corpora")
+    self.current_template_boxes = tf.identity(padded_template_boxes[:num_temp_props], name="current_template_boxes")
+    print(self.current_template_boxes, self.current_template_corpora)
 
     # The Faster R-CNN paper recommends pruning anchors that venture outside
     # the image window at training time and clipping at inference time.

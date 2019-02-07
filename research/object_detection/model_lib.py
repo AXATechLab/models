@@ -370,11 +370,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       # can write learning rate summaries on TPU without host calls.
       training_optimizer, optimizer_summary_vars = optimizer_builder.build(
           train_config.optimizer)
-      if not train_config.transcription_optimizer.use_detection:
-        transcription_optimizer, _ = optimizer_builder.build(
-            train_config.transcription_optimizer)
-      elif three_stages:
-        transcription_optimizer = training_optimizer
+      # if not train_config.transcription_optimizer.use_detection:
+      #   transcription_optimizer, _ = optimizer_builder.build(
+      #       train_config.transcription_optimizer)
+      # elif three_stages:
+      #   transcription_optimizer = training_optimizer
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if use_tpu:
@@ -414,21 +414,21 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           name='')  # Preventing scope prefix on all variables.
 
       if is_training:
-        if three_stages:
-          train_transcription_op = tf.contrib.layers.optimize_loss(
-              loss=transcription_loss,
-              global_step=None,
-              increment_global_step=False,
-              learning_rate=None,
-              clip_gradients=clip_gradients_value,
-              optimizer=transcription_optimizer,
-              variables=trainable_variables,
-              summaries=summaries,
-              name='')  # Preventing scope prefix on all variables.
+        # if three_stages:
+        #   train_transcription_op = tf.contrib.layers.optimize_loss(
+        #       loss=transcription_loss,
+        #       global_step=None,
+        #       increment_global_step=False,
+        #       learning_rate=None,
+        #       clip_gradients=clip_gradients_value,
+        #       optimizer=transcription_optimizer,
+        #       variables=trainable_variables,
+        #       summaries=summaries,
+        #       name='')  # Preventing scope prefix on all variables.
 
-          train_op = tf.group(train_detection_op, train_transcription_op)
-        else:
-          train_op = train_detection_op
+        #   train_op = tf.group(train_detection_op, train_transcription_op)
+        # else:
+        train_op = train_detection_op
 
     if mode == tf.estimator.ModeKeys.PREDICT:
       export_outputs = {

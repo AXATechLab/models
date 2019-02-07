@@ -12,8 +12,10 @@ from object_detection.metrics import coco_tools
 
 from glob import glob
 
+import json
+
 def visualize_predictions(annot_paths, graph_path, output_dir, max_num_evaluations, max_num_visualizations,
-    max_num_predictions):
+    max_num_predictions, template_txt=None, visualize_template=False):
     """ Return a set of `results` for all images in the given list
     This is a dictionary conforming to the requirements of
     `evaluate_detection_results_pascal_voc`"""
@@ -28,7 +30,7 @@ def visualize_predictions(annot_paths, graph_path, output_dir, max_num_evaluatio
             tf.import_graph_def(od_graph_def, name='')
         detection_sess = tf.Session(graph=detection_graph)
 
-        ''' Make output directories '''
+        # Make output directories
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         if not os.path.exists(output_dir + "images"):
@@ -36,7 +38,6 @@ def visualize_predictions(annot_paths, graph_path, output_dir, max_num_evaluatio
         if not os.path.exists(output_dir):
             os.makedirs(output_dir + "log")
 
-        ''' Store data here for metric evaluation '''
         list_dict = {
             'image_ids' : [],
             'dt_boxes_list' : [],
@@ -52,55 +53,70 @@ def visualize_predictions(annot_paths, graph_path, output_dir, max_num_evaluatio
             'detection_classes' : detection_graph.get_tensor_by_name('detection_classes:0'),
             'detection_corpora': detection_graph.get_tensor_by_name('detection_corpora:0'),
             'num_detections' : detection_graph.get_tensor_by_name('num_detections:0'),
+            'current_template_boxes': detection_graph.get_tensor_by_name('current_template_boxes:0'),
+            'current_template_corpora': detection_graph.get_tensor_by_name('current_template_corpora:0'),
             'words' : detection_graph.get_tensor_by_name('words:0'),
             'score' : detection_graph.get_tensor_by_name('score:0'),
         }
         params = {
             'max_num_visualizations' : max_num_visualizations,
             'max_num_predictions' : max_num_predictions,
-            'output_dir' : output_dir
+            'output_dir' : output_dir,
+            'visualize_template': visualize_template
         }
+
+        if template_txt:
+            with open(template_txt, 'r') as f:
+                template_ids = json.load(f)
 
         # Initialize tables
         detection_sess.run([detection_graph.get_operation_by_name('key_value_init'),
         	detection_graph.get_operation_by_name('key_value_init_1')])
-
 
         count = 0
         for image_annot_path in annot_paths:
             if max_num_evaluations >= 0 and count >= max_num_evaluations:
                 break
             print("Input File:", image_annot_path)
-            key = os.path.splitext(os.path.split(image_annot_path)[1])[0]
+            key, ext = os.path.splitext(os.path.split(image_annot_path)[1])
             image_np = cv2.imread(image_annot_path, cv2.IMREAD_COLOR)
             b,g,r = cv2.split(image_np)
             image_np = cv2.merge([r,g,b])
+            if template_txt:
+                tid = int(template_ids[key + ext])
+            else:
+                # A template id of -1 means not available. This way the assertion on multiple templates will fail.
+                # A model with a single template will run.
+                tid = -1
+            tid = np.array([tid], dtype=np.int64)
 
-            visualize_single_example(image_np, key, detection_sess, params, list_dict, model_dict, count)
+            visualize_single_example(image_np, key, detection_sess, params, list_dict, model_dict, count, tid)
             count = count + 1
 
     detection_sess.close()
 
 
-def visualize_single_example(image_np, key, detection_sess, params, list_dict, model_dict, count):
+def visualize_single_example(image_np, key, detection_sess, params, list_dict, model_dict, count, tid):
     image_np_expanded = np.expand_dims(image_np, axis=0)    # [1, H, W, C]
     print(count)
-    # A template id of -1 means not available. This way the assertion on multiple templates will fail (they are
-    # not supported for now). A model with a single template will run.
-    tid = np.array([-1], dtype=np.int64)
+
     try:
-        dt_boxes, dt_scores, dt_classes, dt_corpora, transcriptions, transcription_scores = detection_sess.run([
+        result = detection_sess.run([
             model_dict['detection_boxes'],
             model_dict['detection_scores'],
             model_dict['detection_classes'],
             model_dict['detection_corpora'],
+            model_dict['current_template_boxes'],
+            model_dict['current_template_corpora'],
             model_dict['words'],
             model_dict['score']
             ],
             feed_dict={model_dict['image_tensor']: image_np_expanded, model_dict['template_id']: tid})
     except tf.errors.InvalidArgumentError as e:
-        print("InvalidArgumentError occurred, are you using a model with multiple templates? (unsupported).")
+        print("InvalidArgumentError occurred, are you using a model with multiple templates? You must provide template ids.")
         raise e
+
+    dt_boxes, dt_scores, dt_classes, dt_corpora, template_boxes, template_corpora, transcriptions, transcription_scores = result
 
     ''' Get rid of the first dimension, de-normalize and format for visualization
         (as expected in eval_util.visualize_detection_results) '''
@@ -120,12 +136,19 @@ def visualize_single_example(image_np, key, detection_sess, params, list_dict, m
         'detection_classes' : dt_classes,
     }
 
+    if not params['visualize_template']:
+        template_boxes = None
+        template_corpora = None
+    else:
+        template_boxes[:, [0, 2]] *= image_np.shape[0]
+        template_boxes[:, [1, 3]] *= image_np.shape[1]
+
     ''' Draw and write out detections '''
     if params['max_num_visualizations'] < 0 or count < params['max_num_visualizations']:
         visualizer.visualize_detection_results(result_dict_for_single_example, key, -1, list_dict['category_index'],
             summary_dir=(params['output_dir'] + "log/"), export_dir=(params['output_dir'] + "images"), show_groundtruth=False,
             max_num_predictions=params['max_num_predictions'], transcriptions=transcriptions, detection_corpora=dt_corpora,
-            keep_image_id_for_visualization_export=False,
+            keep_image_id_for_visualization_export=False, template_boxes=template_boxes, template_corpora=template_corpora, tid=tid[0],
             min_score_thresh=.5)
 
     ''' Store example for metric evaluation '''
@@ -167,6 +190,10 @@ def main():
                     type=int, dest='max_num_visualizations', default=-1)
     parser.add_argument('--max_num_predictions', help="The maximum number of predictions to be visualized per image.",
                     type=int, dest='max_num_predictions', default=100)
+    parser.add_argument('--template_ids', help="A txt file containing (image_name, template_id) pairs in json format. If not provided we assume there is only one template.",
+                    dest='template_ids')
+    parser.add_argument('--visualize_template', action="store_true", help="Set this flag to show the template along the predictions.",
+                    dest='visualize_template')
 
     args = parser.parse_args()
 
@@ -178,7 +205,9 @@ def main():
     visualize_predictions(annot_paths, graph_path, output_dir,
         max_num_evaluations=args.max_num_evaluations,
         max_num_visualizations=args.max_num_visualizations,
-        max_num_predictions=args.max_num_predictions)
+        max_num_predictions=args.max_num_predictions,
+        template_txt=args.template_ids,
+        visualize_template=args.visualize_template)
 
 
 if __name__ == '__main__':

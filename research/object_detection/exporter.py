@@ -243,11 +243,6 @@ def write_saved_model(saved_model_path,
               outputs=tensor_info_outputs,
               method_name=signature_constants.PREDICT_METHOD_NAME))
 
-      # if is_two_stages:
-      #   main_op = tf.saved_model.main_op.main_op()
-      # else:
-      #   main_op = None
-
       builder.add_meta_graph_and_variables(
           sess, [tf.saved_model.tag_constants.SERVING],
           signature_def_map={
@@ -387,8 +382,8 @@ def _export_inference_graph(input_type,
   else:
     output_node_names = ','.join(outputs.keys())
 
-  # @Michele: workaround for freezing HashTable objects. See https://github.com/tensorflow/tensorflow/issues/8665 (21.01.2019)
-  # key_value_init and key_value_init_1 are supposed to match the initializers of transcription_model.table_str2int and
+  # @Michele: workaround for reinitializing HashTable objects after freezing. See https://github.com/tensorflow/tensorflow/issues/8665 (21.01.2019)
+  # key_value_init and key_value_init_1 are the names of the initializers of transcription_model.table_str2int and
   # transcription_model.table_int2str.
   #
   # When loading the frozen graph, please remember to run

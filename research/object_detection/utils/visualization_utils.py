@@ -611,6 +611,7 @@ def visualize_boxes_and_labels_on_image_array(
     scores,
     category_index,
     template_boxes=None,
+    template_corpora=None,
     tid=-1,
     transcriptions=None,
     transcription_scores=None,
@@ -672,6 +673,14 @@ def visualize_boxes_and_labels_on_image_array(
   if template_boxes is not None:
     for i in range(template_boxes.shape[0]):
       ymin, xmin, ymax, xmax = template_boxes[i]
+      label = ""
+      if tid >= 0:
+        if template_corpora is not None:
+          label = "[Type {type}] id: {id}".format(type=template_corpora[i], id=tid)
+        else:
+          label = "id: {id}".format(id=tid)
+      elif template_corpora is not None:
+        label = "[Type {type}]".format(type=template_corpora[i])
       draw_bounding_box_on_image_array(
         image,
         ymin,
@@ -680,7 +689,7 @@ def visualize_boxes_and_labels_on_image_array(
         xmax,
         color='red',
         thickness=line_thickness,
-        display_str_list=[str("id: {}".format(tid))],
+        display_str_list=[label],
         use_normalized_coordinates=use_normalized_coordinates)
 
   box_to_display_str_map = collections.defaultdict(list)
