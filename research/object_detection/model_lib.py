@@ -346,9 +346,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       losses_dict = detection_model.loss(
           prediction_dict, features[fields.InputDataFields.true_image_shape])
+      losses_dict['Loss/ctc_loss'] = transcription_loss
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
       w_regularizer = detection_model.loss_weight_regularizer()
       losses_dict['Loss/weight_regularization'] = w_regularizer
+
       losses.append(w_regularizer)
       if train_config.add_regularization_loss:
         regularization_losses = tf.get_collection(
@@ -370,11 +372,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       # can write learning rate summaries on TPU without host calls.
       training_optimizer, optimizer_summary_vars = optimizer_builder.build(
           train_config.optimizer)
-      # if not train_config.transcription_optimizer.use_detection:
-      #   transcription_optimizer, _ = optimizer_builder.build(
-      #       train_config.transcription_optimizer)
-      # elif three_stages:
-      #   transcription_optimizer = training_optimizer
 
     if mode == tf.estimator.ModeKeys.TRAIN:
       if use_tpu:
@@ -414,20 +411,6 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           name='')  # Preventing scope prefix on all variables.
 
       if is_training:
-        # if three_stages:
-        #   train_transcription_op = tf.contrib.layers.optimize_loss(
-        #       loss=transcription_loss,
-        #       global_step=None,
-        #       increment_global_step=False,
-        #       learning_rate=None,
-        #       clip_gradients=clip_gradients_value,
-        #       optimizer=transcription_optimizer,
-        #       variables=trainable_variables,
-        #       summaries=summaries,
-        #       name='')  # Preventing scope prefix on all variables.
-
-        #   train_op = tf.group(train_detection_op, train_transcription_op)
-        # else:
         train_op = train_detection_op
 
     if mode == tf.estimator.ModeKeys.PREDICT:
@@ -511,7 +494,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
           mode=mode,
           scaffold_fn=scaffold_fn,
           predictions=final_response,
-          loss=total_loss + transcription_loss,
+          loss=total_loss,
           train_op=train_op,
           eval_metrics=eval_metric_ops,
           export_outputs=export_outputs)
@@ -519,7 +502,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False, transcr
       return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=final_response,
-          loss=total_loss + transcription_loss,
+          loss=total_loss,
           train_op=train_op,
           eval_metric_ops=eval_metric_ops,
           export_outputs=export_outputs,

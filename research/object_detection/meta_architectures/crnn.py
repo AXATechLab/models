@@ -416,8 +416,8 @@ class CRNN:
         target_words = match.gather_based_on_match(groundtruth_text, self.NULL, self.NULL)
         normalized_detection_boxlist.add_field(fields.BoxListFields.groundtruth_text, target_words)
 
-        positive_indicator = match.matched_column_indicator()
         if mode == tf.estimator.ModeKeys.TRAIN:
+            positive_indicator = match.matched_column_indicator()
             normalized_detection_boxlist = box_list_ops.boolean_mask(normalized_detection_boxlist, positive_indicator)
         return normalized_detection_boxlist
 
@@ -546,6 +546,9 @@ class CRNN:
         normalized_detection_boxlist.add_field(fields.BoxListFields.scores, detection_scores)
         normalized_detection_boxlist = self._assign_detection_targets(normalized_detection_boxlist,
             groundtruth_boxlist, groundtruth_text, true_image_shapes, mode)
+
+        tf.summary.scalar("Batch_Size", normalized_detection_boxlist.num_boxes())
+
         forward_pass = self._build_forward_pass(normalized_detection_boxlist, rpn_features_to_crop, true_image_shapes, mode)
         if mode == tf.estimator.ModeKeys.PREDICT:
             fail_cond = tf.constant(False, dtype=tf.bool)
