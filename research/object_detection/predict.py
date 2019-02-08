@@ -118,8 +118,8 @@ def visualize_single_example(image_np, key, detection_sess, params, list_dict, m
 
     dt_boxes, dt_scores, dt_classes, dt_corpora, template_boxes, template_corpora, transcriptions, transcription_scores = result
 
-    ''' Get rid of the first dimension, de-normalize and format for visualization
-        (as expected in eval_util.visualize_detection_results) '''
+    # Get rid of the first dimension, de-normalize and format for visualization
+    #   (as expected in eval_util.visualize_detection_results)
     dt_boxes = dt_boxes.reshape((-1, 4))
     dt_scores = dt_scores.reshape(-1)
     dt_classes = dt_classes.reshape(-1)
@@ -143,7 +143,7 @@ def visualize_single_example(image_np, key, detection_sess, params, list_dict, m
         template_boxes[:, [0, 2]] *= image_np.shape[0]
         template_boxes[:, [1, 3]] *= image_np.shape[1]
 
-    ''' Draw and write out detections '''
+    # Draw and write out detections
     if params['max_num_visualizations'] < 0 or count < params['max_num_visualizations']:
         visualizer.visualize_detection_results(result_dict_for_single_example, key, -1, list_dict['category_index'],
             summary_dir=(params['output_dir'] + "log/"), export_dir=(params['output_dir'] + "images"), show_groundtruth=False,
@@ -151,7 +151,7 @@ def visualize_single_example(image_np, key, detection_sess, params, list_dict, m
             keep_image_id_for_visualization_export=False, template_boxes=template_boxes, template_corpora=template_corpora, tid=tid[0],
             min_score_thresh=.5)
 
-    ''' Store example for metric evaluation '''
+    # Store example for metric evaluation
     list_dict['image_ids'].append(key)
     list_dict['dt_scores_list'].append(dt_scores)
     list_dict['dt_classes_list'].append(dt_classes)
