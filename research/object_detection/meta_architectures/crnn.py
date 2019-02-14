@@ -843,7 +843,7 @@ class CRNN:
         return loss_ctc
 
 
-    def write_to_file(self, x, dt_crops, source_id, corpora, transcriptions, true_sizes, path):
+    def write_to_file(self, x, img, dt_boxes, transcriptions, source_id, corpora, gt_text, path):
         """ Debug function to dump image tensors to file. To embed in a tf.py_func() node.
 
         Args:
@@ -860,13 +860,22 @@ class CRNN:
         """
         path = os.path.join(path.decode("latin1"), source_id.decode('latin1'))
         writer = TranscriptionRecordsWriter(Path(path))
-        for i in range(dt_crops.shape[0]):
-            crop = dt_crops[i]
-            f = Form(crop)
-            f.boxes = np.array([[0, 0, f.height, true_sizes[i]]])
-            f.type_codes = np.array([corpora[i]])
-            f.transcriptions = np.array([transcriptions[i].decode('latin1')])
-            writer.write(f)
+        # for i in range(dt_crops.shape[0]):
+        #     crop = dt_crops[i]
+        #     f = Form(crop)
+        #     f.boxes = np.array([[0, 0, f.height, true_sizes[i]]])
+        #     f.type_codes = np.array([corpora[i]])
+        #     f.transcriptions = np.array([gt_text[i].decode('latin1')])
+        #     writer.write(f)
+        labels = np.empty(transcriptions.shape[0])
+        for i in range(transcriptions.shape[0]):
+            labels[i] = "{gt}|{prediction}".format(gt=gt_text[i].decode('latin1'),
+                prediction=transcriptions[i].decode('latin1'))
+        f = Form(img)
+        f.boxes = dt_boxes
+        f.type_codes = corpora
+        f.transcriptions = labels
+        writer.write(f)
         writer.close()
         return x
 
@@ -1066,13 +1075,16 @@ class CRNN:
         indicator = match.matched_column_indicator()
         matched_detection_boxes = tf.boolean_mask(assigned_detection_boxes, indicator)
         matched_detection_corpora = tf.boolean_mask(assigned_detection_corpora, indicator)
+        matched_transcriptions = matched_groundtruth_boxlist.get_field(fields.BoxListFields.transcription)
         matched_groundtruth_text = matched_groundtruth_boxlist.get_field(fields.BoxListFields.groundtruth_text)
         if self.flags.dump_metrics_input_to_tfrecord_using_groundtruth:
-            matched_detection_boxes = matched_groundtruth_boxlist.get()
-        crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, matched_detection_boxes, [32, 256])
+            crop_boxes = matched_groundtruth_boxlist.get()
+        else:
+            crop_boxes = matched_detection_boxes
+        # crops, true_sizes = self.crop_feature_map_keep_aspect_ratio(image, crop_boxes, [32, 256])
         path = os.path.join(self.flags.dump_directory, "metrics_input")
-        return tf.py_func(self.write_to_file, [x, crops,
-            filename, matched_detection_corpora, matched_groundtruth_text, true_sizes, path], x.dtype)
+        return tf.py_func(self.write_to_file, [x, image, matched_detection_boxes, matched_transcriptions,
+            filename, matched_detection_corpora, matched_groundtruth_text, path], x.dtype)
 
     def _build_metric_graph(self, words, detection_boxes, target_words, groundtruth_boxes, padded_groundtruth_text,
         debug_corpora, filename=None, original_image=None, string2int=None, int2string=None):

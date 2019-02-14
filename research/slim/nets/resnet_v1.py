@@ -335,7 +335,10 @@ def resnet_v1_101(inputs,
                   reuse=None,
                   scope='resnet_v1_101',
                   on_text=False):
-  """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
+  """ResNet-101 model of [1]. See resnet_v1() for arg and return description.
+
+  Args:
+    on_text: less horizontal max pooling, customized for us but not currently used. TODO see if this comment is missing elsewhere."""
   blocks = [
       resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
       resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
